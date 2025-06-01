@@ -1,6 +1,8 @@
 
 import numpy as np
 
+from normalization import LayerNormalization
+
 
 def sigmoid(x, safety_threshold=200):
     exp_safety_threshold = np.exp(safety_threshold)
@@ -12,6 +14,11 @@ def tanh(x, safety_threshold=200):
     exp_x = np.where(x>safety_threshold, exp_safety_threshold, np.exp(x))
     exp_minus_x = np.where(x<-safety_threshold, exp_safety_threshold, np.exp(-x))
     return (exp_x-exp_minus_x) / (exp_x+exp_minus_x)
+
+def softmax(X, safety_threshold=200, axis=-1):
+    exp_safety_threshold = np.exp(safety_threshold)
+    exp_X = np.where(X>safety_threshold, exp_safety_threshold, np.exp(X))
+    return exp_X / np.sum(exp_X, axis=axis, keepdims=True)
 
 def dummy_encode(X, F=None):
     if len(X.shape) == 1:
@@ -309,3 +316,206 @@ class EmbeddingLayer:
     
     def update(self, W_gradient):
         self.W += W_gradient
+
+
+class PositionalEmbeddingLayer(EmbeddingLayer):
+    
+    def __init__(self, F, D, dropout_p=0.0, mask_zero=True):
+        if D % 2 == 1:
+            raise ValueError("Output dimension of positional encoding needs to be a multiple of 2")
+        super().__init__(F, D, dropout_p=dropout_p, mask_zero=mask_zero)
+        positions = np.arange(2048)
+        self.positional_encoding = np.array([
+            np.sin(positions / np.power(10000, 2*i/self.D)) if j == 0 else 
+            np.cos(positions / np.power(10000, 2*i/self.D))
+            for i in range(self.D//2) for j in range(2)
+        ]).T.astype(np.float32)
+        
+    def forward(self, X, inference=True):
+        if self.mask_zero:
+            X = X-1
+        X = dummy_encode(X, self.F)
+        W = self.W
+        if not inference and self.dropout_p > 0.0 and self.dropout_p < 1.0:
+            W *= np.where(np.random.random(size=W.shape)>self.dropout_p, 1.0, 0.0) / (1-self.dropout_p)
+        return X@W * np.sqrt(self.D) + np.expand_dims(self.positional_encoding[:X.shape[1],:], axis=0)
+    
+    def backward(self, X, Y_error, l2=0.0):
+        if self.mask_zero:
+            X = X-1
+        X = dummy_encode(X, self.F)
+        W_gradient = np.sum(np.transpose(X, axes=(1,2,0))@np.transpose(Y_error, axes=(1,0,2)), axis=0) + 2*l2 * self.W / self.F / self.D
+        return {'W_gradient': W_gradient * np.sqrt(self.D)}, None
+    
+    def update(self, W_gradient):
+        self.W += W_gradient
+
+
+class AddLayer:
+    
+    def __init__(self):
+        return
+    
+    def forward(self, X):
+        return np.sum(X, axis=0)
+    
+    def backward(self, X, Y_error):
+        return np.repeat(np.expand_dims(Y_error, axis=0), len(X), axis=0)
+
+
+class MultiHeadAttentionLayer:
+    
+    def __init__(self, T, F, NH=10, add_bias=True, dropout_p=0.0, use_causal_mask=False):
+        if F % NH != 0:
+            raise ValueError(f"The input size must be a multiple of the number of heads ({NH} here)")
+        self.add_bias = add_bias
+        self.dropout_p = dropout_p
+        self.T = T
+        self.F = F
+        self.NH = NH
+        self.W_q = np.random.normal(loc=0, scale=1/self.F, size=(self.F, self.F)) # query input weights
+        self.W_k = np.random.normal(loc=0, scale=1/self.F, size=(self.F, self.F)) # key input weights
+        self.W_v = np.random.normal(loc=0, scale=1/self.F, size=(self.F, self.F)) # value input weights
+        self.mask = np.tril(np.ones((self.T, self.T))) if use_causal_mask else np.ones((self.T, self.T))
+        
+    def split(self, X):
+        query_size = self.F // self.NH
+        X = np.reshape(X, (X.shape[0], X.shape[1], self.NH, query_size)) # (N x T x NH x F/NH)
+        return np.transpose(X, axes=(0,2,1,3)) # (N x NH x T x F/NH)
+    
+    def merge(self, X):
+        X = np.transpose(X, axes=(0,2,1,3)) # (N x T x NH x F/NH)
+        return np.reshape(X, (X.shape[0], X.shape[1], X.shape[2]*X.shape[3])) # (N x T x F)
+    
+    def forward(self, X_q, X_k=None, X_v=None, inference=True):
+        X_k = X_q.copy() if X_k is None else X_k
+        X_v = X_q.copy() if X_v is None else X_v
+        X = {'Q': X_q, 'K': X_k, 'V': X_v} # (N x T x F)
+        W = {'Q': self.W_q, 'K': self.W_k, 'V': self.W_v} # (F x F)
+        if not inference and self.dropout_p > 0.0 and self.dropout_p < 1.0:
+            for k in ['Q', 'K', 'V']:
+                W[k] *= np.where(np.random.random(size=W[k].shape)>self.dropout_p, 1.0, 0.0) / (1-self.dropout_p)
+        # Linear transformation
+        H = {k: X[k]@W[k] for k in ['Q', 'K', 'V']} # (N x T x F)
+        # Data splitting accross heads
+        H = {k: self.split(H[k]) for k in H} # (N x NH x T x F/NH)
+        # Attention score
+        S = H['Q']@np.transpose(H['K'], axes=(0,1,3,2)) # (N x NH x T x T)
+        S = S * np.expand_dims(self.mask, axis=(0,1)) # (N x NH x T x T)
+        S = softmax(S / np.sqrt(self.F // self.NH), axis=(2,3)) # (N x NH x T x T)
+        S = S@H['V'] # (N x NH x T x F/NH)
+        # Attention score merge
+        S = self.merge(S) # (N x T x F)
+        return S
+        
+    def backward(self, Y_error, X_q, X_k=None, X_v=None, l2=0.0):
+        X_k = X_q.copy() if X_k is None else X_k
+        X_v = X_q.copy() if X_v is None else X_v
+        X = {'Q': X_q, 'K': X_k, 'V': X_v} # (N x T x F)
+        W = {'Q': self.W_q, 'K': self.W_k, 'V': self.W_v} # (F x F)
+        # Error splitting accross heads
+        Y_error = self.split(Y_error) # (N x NH x T x F/NH)
+        # Linear transformation
+        H = {k: X[k]@W[k] for k in ['Q', 'K', 'V']} # (N x T x F)
+        # Data splitting accross heads
+        H = {k: self.split(H[k]) for k in H} # (N x NH x T x F/NH)
+        # Attention score (until softmax)
+        query_size = self.F // self.NH
+        S = H['Q']@np.transpose(H['K'], axes=(0,1,3,2)) # (N x NH x T x T)
+        S = S * np.expand_dims(self.mask, axis=(0,1)) # (N x NH x T x T)
+        S = softmax(S / np.sqrt(query_size), axis=(2,3)) # (N x NH x T x T)
+        # Compute W_q gradient
+        W_q_gradient = (S*(1-S)) * (Y_error @ np.transpose(H['V'], axes=(0,1,3,2))) # (N x NH x T x T)
+        W_k_gradient = W_q_gradient.copy() # Same starting calculation
+        W_q_gradient = W_q_gradient @ H['K'] # (N x NH x T x F/NH)
+        W_q_gradient = np.transpose(np.repeat(np.expand_dims(X['Q'], axis=1), self.NH, axis=1), axes=(0,1,3,2)) @ W_q_gradient # (N x NH x F x F/NH)
+        W_q_gradient = self.merge(W_q_gradient) # (N x F x F)
+        W_q_gradient = np.sum(W_q_gradient, axis=0) / np.sqrt(query_size) # (F x F)
+        # Compute X_q error to propagate
+        X_q_error = (S*(1-S)) * (Y_error @ np.transpose(H['V'], axes=(0,1,3,2))) # (N x NH x T x T)
+        X_k_error = np.transpose(X_q_error, axes=(0,1,3,2)) # Same starting calculation but transposed
+        X_q_error = X_q_error @ H['K'] @ np.transpose(self.split(np.repeat(np.expand_dims(W['Q'], axis=0), Y_error.shape[0], axis=0)), axes=(0,1,3,2)) # (N x NH x T x F)
+        X_q_error = np.sum(X_q_error, axis=1) / np.sqrt(query_size) # (N x T x F)
+        # Compute W_k gradient
+        W_k_gradient = np.transpose(W_k_gradient, axes=(0,1,3,2)) @ H['Q'] # (N x NH x T x F/NH)
+        W_k_gradient = np.transpose(np.repeat(np.expand_dims(X['K'], axis=1), self.NH, axis=1), axes=(0,1,3,2)) @ W_k_gradient # (N x NH x F x F/NH)
+        W_k_gradient = self.merge(W_k_gradient) # (N x F x F)
+        W_k_gradient = np.sum(W_k_gradient, axis=0) / np.sqrt(query_size) # (F x F)
+        # Compute X_k error to propagate
+        X_k_error = X_k_error @ H['Q'] @ np.transpose(self.split(np.repeat(np.expand_dims(W['K'], axis=0), Y_error.shape[0], axis=0)), axes=(0,1,3,2)) # (N x NH x T x F)
+        X_k_error = np.sum(X_k_error, axis=1) / np.sqrt(query_size) # (N x T x F)
+        # Compute W_v gradient
+        W_v_gradient = np.transpose(S, axes=(0,1,3,2)) @ Y_error # (N x NH x T x F/NH)
+        W_v_gradient = np.transpose(np.repeat(np.expand_dims(X['V'], axis=1), self.NH, axis=1), axes=(0,1,3,2)) @ W_v_gradient # (N x NH x F x F/NH)
+        W_v_gradient = self.merge(W_v_gradient) # (N x F x F)
+        W_v_gradient = np.sum(W_v_gradient, axis=0) # (F x F)
+        # Compute X_v error to propagate
+        X_v_error = Y_error @ np.transpose(self.split(np.repeat(np.expand_dims(W['V'], axis=0), Y_error.shape[0], axis=0)), axes=(0,1,3,2)) # (N x NH x T x F)
+        X_v_error = np.transpose(S, axes=(0,1,3,2)) @ X_v_error # (N x NH x T x F)
+        X_v_error = np.sum(X_v_error, axis=1) # (N x T x F)
+        return {'W_q_gradient': W_q_gradient, 'W_k_gradient': W_k_gradient, 'W_v_gradient': W_v_gradient}, (X_q_error, X_k_error, X_v_error)
+    
+    def update(self, W_q_gradient, W_k_gradient, W_v_gradient):
+        self.W_q += W_q_gradient
+        self.W_k += W_k_gradient
+        self.W_v += W_v_gradient
+
+
+class BaseAttentionLayer:
+    
+    def __init__(self, T, F, NH=10, add_bias=True, dropout_p=0.0, use_causal_mask=False):
+        self.mha_layer = MultiHeadAttentionLayer(T, F, NH=NH, add_bias=add_bias, dropout_p=dropout_p, use_causal_mask=use_causal_mask)
+        self.norm_layer = LayerNormalization()
+        self.add_layer = AddLayer()
+        
+    def forward(self, X_q, X_k=None, X_v=None, X_skip=None, inference=True):
+        X_mha = self.mha_layer.forward(X_q, X_k, X_v, inference=inference)
+        X_add = self.add_layer.forward([X_mha, X_q if X_skip is None else X_skip])
+        return self.norm_layer.forward(X_add)
+    
+    def backward(self, Y_error, X_q, X_k=None, X_v=None, X_skip=None, l2=0.0):
+        X_mha = self.mha_layer.forward(X_q, X_k, X_v, inference=False)
+        X_add = self.add_layer.forward([X_mha, X_q if X_skip is None else X_skip])
+        norm_gradients, X_add_error = self.norm_layer.backward(X_add, Y_error, l2=l2)
+        X_mha_error, X_skip_error = self.add_layer.backward([X_mha, X_q if X_skip is None else X_skip], X_add_error)
+        mha_gradients, (X_q_error, X_k_error, X_v_error) = self.mha_layer.backward(X_mha_error, X_q, X_k, X_v, l2=l2)
+        gradients = {
+            'W_q_gradient': mha_gradients['W_q_gradient']
+            , 'W_k_gradient': mha_gradients['W_k_gradient']
+            , 'W_v_gradient': mha_gradients['W_v_gradient']
+            , 'gamma_gradient': norm_gradients['gamma_gradient']
+            , 'beta_gradient': norm_gradients['beta_gradient']
+        }
+        return gradients, (X_q_error, X_k_error, X_v_error, X_skip_error)
+    
+    def update(self, W_q_gradient, W_k_gradient, W_v_gradient, gamma_gradient, beta_gradient):
+        self.mha_layer.update(W_q_gradient, W_k_gradient, W_v_gradient)
+        self.norm_layer.update(gamma_gradient, beta_gradient)
+
+
+class CrossAttentionLayer(BaseAttentionLayer):
+    
+    def __init__(self, T, F, NH=10, add_bias=True, dropout_p=0.0, use_causal_mask=False):
+        super().__init__(T, F, NH=NH, add_bias=add_bias, dropout_p=dropout_p, use_causal_mask=use_causal_mask)
+        
+    def forward(self, X, X_context, inference=True):
+        return super().forward(X_q=X, X_k=X_context, X_v=X_context, X_skip=X, inference=inference)
+    
+    def backward(self, Y_error, X, X_context, l2=0.0):
+        gradients, (X_q_error, X_k_error, X_v_error, X_skip_error) = super().backward(
+            Y_error, X_q=X, X_k=X_context, X_v=X_context, X_skip=X, l2=l2)
+        return gradients, (X_q_error + X_skip_error, X_k_error + X_v_error)
+
+
+class SelfAttentionLayer(BaseAttentionLayer):
+    
+    def __init__(self, T, F, NH=10, add_bias=True, dropout_p=0.0, use_causal_mask=False):
+        super().__init__(T, F, NH=NH, add_bias=add_bias, dropout_p=dropout_p, use_causal_mask=use_causal_mask)
+        
+    def forward(self, X, inference=True):
+        return super().forward(X_q=X, X_k=X, X_v=X, X_skip=X, inference=inference)
+    
+    def backward(self, Y_error, X, l2=0.0):
+        gradients, (X_q_error, X_k_error, X_v_error, X_skip_error) = super().backward(
+            Y_error, X_q=X, X_k=X, X_v=X, X_skip=X, l2=l2)
+        return gradients, (X_q_error + X_skip_error + X_k_error + X_v_error)
