@@ -2,7 +2,6 @@
 import numpy as np
 
 
-
 def sigmoid(x, safety_threshold=200):
     exp_safety_threshold = np.exp(safety_threshold)
     exp_minus_x = np.where(x<-safety_threshold, exp_safety_threshold, np.exp(-x))
@@ -88,21 +87,21 @@ class RecurrentLayer:
         
         H = np.zeros((N, self.D)) # Output
         W_gradient = np.zeros((self.F, self.D)) # W gradient
-        H_W_gradient = np.zeros((N, self.F, self.D)) # Derivative of H wrt W
+        H_W_gradient = np.zeros((N, self.F, self.D, self.D)) # Derivative of H wrt W
         V_gradient = np.zeros((self.D, self.D)) # V gradient
-        H_V_gradient = np.zeros((N, self.D, self.D)) # Derivative of H wrt V
+        H_V_gradient = np.zeros((N, self.D, self.D, self.D)) # Derivative of H wrt V
         error = np.zeros((N, self.T, non_bias_F)) # Propagated error
         H_X_gradient = np.zeros((N, self.T, non_bias_F, self.D)) # Derivative of H wrt X
         for t in range(self.T):
-            H_W_gradient = np.repeat(np.expand_dims(X[:,t,:], axis=-1), self.D, axis=-1) + H_W_gradient @ np.diag(np.diag(self.V))
-            H_V_gradient = np.repeat(np.expand_dims(H, axis=-1), self.D, axis=-1) + H_V_gradient * np.repeat(np.expand_dims(self.V, axis=0), N, axis=0)
-            H = X[:,t,:]@self.W + H@self.V
+            H_W_gradient = np.expand_dims(X[:,t,:], axis=(-2,-1)) + H_W_gradient @ self.V
+            H_V_gradient = np.array([[H[n,d]*np.eye(self.D) for d in range(self.D)] for n in range(N)]) + H_V_gradient @ self.V
+            H = X[:,t,:] @ self.W + H @ self.V
             H_X_gradient[:,t,:,:] = np.repeat(np.expand_dims(non_bias_W, axis=0), N, axis=0)
             for s in range(t):
-                H_X_gradient[:,s,:,:] = H_X_gradient[:,s,:,:]@self.V
-            W_gradient = W_gradient + np.sum(np.array([H_W_gradient[n,:,:]*np.expand_dims(Y_error[n,t,:], axis=0) for n in range(N)]), axis=0)
-            V_gradient = V_gradient + np.sum(np.array([H_V_gradient[n,:,:]*np.expand_dims(Y_error[n,t,:], axis=0) for n in range(N)]), axis=0)
-            error = error + np.sum(np.array([H_X_gradient[:,:,:,d]*np.expand_dims(Y_error[:,t,d], axis=(1,2)) for d in range(self.D)]), axis=0)
+                H_X_gradient[:,s,:,:] = H_X_gradient[:,s,:,:] @ self.V
+            W_gradient = W_gradient + np.sum(H_W_gradient*np.expand_dims(Y_error[:,t,:], axis=(1,2)), axis=(0,3))
+            V_gradient = V_gradient + np.sum(H_V_gradient*np.expand_dims(Y_error[:,t,:], axis=(1,2)), axis=(0,3))
+            error = error + np.sum(H_X_gradient*np.expand_dims(Y_error[:,t,:], axis=(1,2)), axis=-1)
                     
         W_gradient = W_gradient + 2*l2 * self.W / self.F / self.D
         V_gradient = V_gradient + 2*l2 * self.V / self.D / self.D
@@ -171,11 +170,11 @@ class LSTMLayer:
         H_t = np.zeros((N, self.D)) # Output at time t
         H_t_minus_1 = np.zeros((N, self.D)) # Output at time t-1
         W_gradient = {k: np.zeros((self.F, self.D)) for k in ['f', 'i', 'o', 'c']} # W gradient
-        C_W_gradient = {k: np.zeros((N, self.F, self.D)) for k in ['f', 'i', 'c']} # Derivative of C wrt W
-        H_W_gradient = {k: np.zeros((N, self.F, self.D)) for k in ['f', 'i', 'o', 'c']} # Derivative of H wrt W
+        C_W_gradient = {k: np.zeros((N, self.F, self.D, self.D)) for k in ['f', 'i', 'c']} # Derivative of C wrt W
+        H_W_gradient = {k: np.zeros((N, self.F, self.D, self.D)) for k in ['f', 'i', 'o', 'c']} # Derivative of H wrt W
         U_gradient = {k: np.zeros((self.D, self.D)) for k in ['f', 'i', 'o', 'c']} # W gradient
-        C_U_gradient = {k: np.zeros((N, self.D, self.D)) for k in ['f', 'i', 'c']} # Derivative of C wrt W
-        H_U_gradient = {k: np.zeros((N, self.D, self.D)) for k in ['f', 'i', 'o', 'c']} # Derivative of H wrt W
+        C_U_gradient = {k: np.zeros((N, self.D, self.D, self.D)) for k in ['f', 'i', 'c']} # Derivative of C wrt W
+        H_U_gradient = {k: np.zeros((N, self.D, self.D, self.D)) for k in ['f', 'i', 'o', 'c']} # Derivative of H wrt W
         error = np.zeros((N, self.T, non_bias_F)) # Propagated error
         H_X_gradient = {k: np.zeros((N, self.T, non_bias_F, self.D)) for k in ['f', 'i', 'o', 'c', 'C', 'H']} # Derivative of H wrt X
         for t in range(self.T):
@@ -188,75 +187,75 @@ class LSTMLayer:
             H_t = tmp['o'] * tanh_c_t
             
             # Forget gate
-            C_W_gradient['f'] = np.repeat(np.expand_dims(tmp['f'], axis=-2), self.F, axis=-2) * (
-                np.repeat(np.expand_dims((1-tmp['f'])*C_t_minus_1, axis=-2), self.F, axis=-2) * (
-                    np.repeat(np.expand_dims(X[:,t,:], axis=-1), self.D, axis=-1) + 
-                    H_W_gradient['f'] @ np.diag(np.diag(U['f']))) + 
+            C_W_gradient['f'] =np.expand_dims(tmp['f'], axis=(1,2)) * (
+                np.expand_dims((1-tmp['f'])*C_t_minus_1, axis=(1,2)) * (
+                    np.expand_dims(X[:,t,:], axis=(2,3)) + 
+                    H_W_gradient['f'] @ U['f']) + 
                  C_W_gradient['f'])
-            H_W_gradient['f'] = np.repeat(np.expand_dims(o_t_tanh_prime_c_t, axis=-2), self.F, axis=-2) * C_W_gradient['f']
-            C_U_gradient['f'] = np.repeat(np.expand_dims(tmp['f'], axis=-2), self.D, axis=-2) * (
-                np.repeat(np.expand_dims((1-tmp['f'])*C_t_minus_1, axis=-2), self.D, axis=-2) * (
-                    np.repeat(np.expand_dims(H_t_minus_1, axis=-1), self.D, axis=-1) + 
-                    H_U_gradient['f'] * np.repeat(np.expand_dims(U['f'], axis=0), N, axis=0)) + 
+            H_W_gradient['f'] = np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)) * C_W_gradient['f']
+            C_U_gradient['f'] = np.expand_dims(tmp['f'], axis=(1,2)) * (
+                np.expand_dims((1-tmp['f'])*C_t_minus_1, axis=(1,2)) * (
+                    np.array([[H_t_minus_1[n,d]*np.eye(self.D) for d in range(self.D)] for n in range(N)]) + 
+                    H_U_gradient['f'] @ U['f']) + 
                 C_U_gradient['f'])
-            H_U_gradient['f'] = np.repeat(np.expand_dims(o_t_tanh_prime_c_t, axis=-2), self.D, axis=-2) * C_U_gradient['f']
+            H_U_gradient['f'] = np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)) * C_U_gradient['f']
 
             # Input gate
             C_W_gradient['i'] = (
-                np.repeat(np.expand_dims(tmp['c']*tmp['i']*(1-tmp['i']), axis=-2), self.F, axis=-2) * (
-                    np.repeat(np.expand_dims(X[:,t,:], axis=-1), self.D, axis=-1) + 
-                    H_W_gradient['i'] @ np.diag(np.diag(U['i']))) + 
-                np.repeat(np.expand_dims(tmp['f'], axis=-2), self.F, axis=-2) * C_W_gradient['i'])
-            H_W_gradient['i'] = np.repeat(np.expand_dims(o_t_tanh_prime_c_t, axis=-2), self.F, axis=-2) * C_W_gradient['i']
+                np.expand_dims(tmp['c']*tmp['i']*(1-tmp['i']), axis=(1,2)) * (
+                    np.expand_dims(X[:,t,:], axis=(2,3)) + 
+                    H_W_gradient['i'] @ U['i']) + 
+                np.expand_dims(tmp['f'], axis=(1,2)) * C_W_gradient['i'])
+            H_W_gradient['i'] = np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)) * C_W_gradient['i']
             C_U_gradient['i'] = (
-                np.repeat(np.expand_dims(tmp['c']*tmp['i']*(1-tmp['i']), axis=-2), self.D, axis=-2) * (
-                    np.repeat(np.expand_dims(H_t_minus_1, axis=-1), self.D, axis=-1) + 
-                    H_U_gradient['i'] * np.repeat(np.expand_dims(U['i'], axis=0), N, axis=0)) + 
-                np.repeat(np.expand_dims(tmp['f'], axis=-2), self.D, axis=-2) * C_U_gradient['i'])
-            H_U_gradient['i'] = np.repeat(np.expand_dims(o_t_tanh_prime_c_t, axis=-2), self.D, axis=-2) * C_U_gradient['i']
+                np.expand_dims(tmp['c']*tmp['i']*(1-tmp['i']), axis=(1,2)) * (
+                    np.array([[H_t_minus_1[n,d]*np.eye(self.D) for d in range(self.D)] for n in range(N)]) + 
+                    H_U_gradient['i'] @ U['i']) + 
+                np.expand_dims(tmp['f'], axis=(1,2)) * C_U_gradient['i'])
+            H_U_gradient['i'] = np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)) * C_U_gradient['i']
 
-            # Output gate
-            H_W_gradient['o'] = np.repeat(np.expand_dims(tmp['o']*(1-tmp['o']) * tanh_c_t, axis=-2), self.F, axis=-2) * (
-                np.repeat(np.expand_dims(X[:,t,:], axis=-1), self.D, axis=-1) + 
-                H_W_gradient['o'] @ np.diag(np.diag(U['o'])))
-            H_U_gradient['o'] = np.repeat(np.expand_dims(tmp['o']*(1-tmp['o']) * tanh_c_t, axis=-2), self.D, axis=-2) * (
-                np.repeat(np.expand_dims(H_t_minus_1, axis=-1), self.D, axis=-1) + 
-                H_U_gradient['o'] * np.repeat(np.expand_dims(U['o'], axis=0), N, axis=0))
+            # Output gate 
+            H_W_gradient['o'] = np.expand_dims(tmp['o']*(1-tmp['o']) * tanh_c_t, axis=(1,2)) * (
+                np.expand_dims(X[:,t,:], axis=(2,3)) + 
+                H_W_gradient['o'] @ U['o'])
+            H_U_gradient['o'] = np.expand_dims(tmp['o']*(1-tmp['o']) * tanh_c_t, axis=(1,2)) * (
+                np.array([[H_t_minus_1[n,d]*np.eye(self.D) for d in range(self.D)] for n in range(N)]) + 
+                H_U_gradient['o'] @ U['o'])
 
             # Concat gate
             C_W_gradient['c'] = (
-                np.repeat(np.expand_dims(tmp['i']*(1-np.square(tmp['c'])), axis=-2), self.F, axis=-2) * (
-                    np.repeat(np.expand_dims(X[:,t,:], axis=-1), self.D, axis=-1) + 
-                    H_W_gradient['c'] @ np.diag(np.diag(U['c']))) + 
-                np.repeat(np.expand_dims(tmp['f'], axis=-2), self.F, axis=-2) * C_W_gradient['c'])
-            H_W_gradient['c'] = np.repeat(np.expand_dims(o_t_tanh_prime_c_t, axis=-2), self.F, axis=-2) * C_W_gradient['c']
+                np.expand_dims(tmp['i']*(1-np.square(tmp['c'])), axis=(1,2)) * (
+                    np.expand_dims(X[:,t,:], axis=(2,3)) + 
+                    H_W_gradient['c'] @ U['c']) + 
+                np.expand_dims(tmp['f'], axis=(1,2)) * C_W_gradient['c'])
+            H_W_gradient['c'] = np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)) * C_W_gradient['c']
             C_U_gradient['c'] = (
-                np.repeat(np.expand_dims(tmp['i']*(1-np.square(tmp['c'])), axis=-2), self.D, axis=-2) * (
-                    np.repeat(np.expand_dims(H_t_minus_1, axis=-1), self.D, axis=-1) + 
-                    H_U_gradient['c'] * np.repeat(np.expand_dims(U['c'], axis=0), N, axis=0)) + 
-                np.repeat(np.expand_dims(tmp['f'], axis=-2), self.D, axis=-2) * C_U_gradient['c'])
-            H_U_gradient['c'] = np.repeat(np.expand_dims(o_t_tanh_prime_c_t, axis=-2), self.D, axis=-2) * C_U_gradient['c']
+                np.expand_dims(tmp['i']*(1-np.square(tmp['c'])), axis=(1,2)) * (
+                    np.array([[H_t_minus_1[n,d]*np.eye(self.D) for d in range(self.D)] for n in range(N)]) + 
+                    H_U_gradient['c'] @ U['c']) + 
+                np.expand_dims(tmp['f'], axis=(1,2)) * C_U_gradient['c'])
+            H_U_gradient['c'] = np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)) * C_U_gradient['c']
 
             # Propagated error
             for k in ['f', 'i', 'o', 'c']:
                 activation_derivate = 1-np.square(tmp[k]) if k == 'c' else tmp[k]*(1-tmp[k])
-                H_X_gradient[k][:,t,:,:] = np.repeat(np.expand_dims(activation_derivate, axis=1), non_bias_F, axis=1) * np.repeat(np.expand_dims(non_bias_W[k], axis=0), N, axis=0)
+                H_X_gradient[k][:,t,:,:] = np.expand_dims(activation_derivate, axis=1) * np.repeat(np.expand_dims(non_bias_W[k], axis=0), N, axis=0)
                 for s in range(t):
-                    H_X_gradient[k][:,s,:,:] = np.repeat(np.expand_dims(activation_derivate, axis=1), non_bias_F, axis=1) * (H_X_gradient[k][:,s,:,:]@U[k])
+                    H_X_gradient[k][:,s,:,:] = np.expand_dims(activation_derivate, axis=1) * (H_X_gradient[k][:,s,:,:] @ U[k])
             H_X_gradient['C'] = (
-                H_X_gradient['f'] * np.repeat(np.repeat(np.expand_dims(C_t_minus_1, axis=(1,2)), self.T, axis=1), non_bias_F, axis=2) + 
-                H_X_gradient['C'] * np.repeat(np.repeat(np.expand_dims(tmp['f'], axis=(1,2)), self.T, axis=1), non_bias_F, axis=2) + 
-                H_X_gradient['i'] * np.repeat(np.repeat(np.expand_dims(tmp['c'], axis=(1,2)), self.T, axis=1), non_bias_F, axis=2) + 
-                H_X_gradient['c'] * np.repeat(np.repeat(np.expand_dims(tmp['i'], axis=(1,2)), self.T, axis=1), non_bias_F, axis=2))
+                H_X_gradient['f'] * np.expand_dims(C_t_minus_1, axis=(1,2)) + 
+                H_X_gradient['C'] * np.expand_dims(tmp['f'], axis=(1,2)) + 
+                H_X_gradient['i'] * np.expand_dims(tmp['c'], axis=(1,2)) + 
+                H_X_gradient['c'] * np.expand_dims(tmp['i'], axis=(1,2)))
             H_X_gradient['H'] = (
-                H_X_gradient['o'] * np.repeat(np.repeat(np.expand_dims(tanh_c_t, axis=(1,2)), self.T, axis=1), non_bias_F, axis=2) + 
-                H_X_gradient['C'] * np.repeat(np.repeat(np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)), self.T, axis=1), non_bias_F, axis=2))
+                H_X_gradient['o'] * np.expand_dims(tanh_c_t, axis=(1,2)) + 
+                H_X_gradient['C'] * np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)))
             
             # Gradients
             for k in W_gradient:
-                W_gradient[k] = W_gradient[k] + np.sum(np.array([H_W_gradient[k][n,:,:]*np.expand_dims(Y_error[n,t,:], axis=0) for n in range(N)]), axis=0)
-                U_gradient[k] = U_gradient[k] + np.sum(np.array([H_U_gradient[k][n,:,:]*np.expand_dims(Y_error[n,t,:], axis=0) for n in range(N)]), axis=0)
-            error = error + np.sum(np.array([H_X_gradient['H'][:,:,:,d]*np.expand_dims(Y_error[:,t,d], axis=(1,2)) for d in range(self.D)]), axis=0)
+                W_gradient[k] = W_gradient[k] + np.sum(H_W_gradient[k]*np.expand_dims(Y_error[:,t,:], axis=(1,2)), axis=(0,3))
+                U_gradient[k] = U_gradient[k] + np.sum(H_U_gradient[k]*np.expand_dims(Y_error[:,t,:], axis=(1,2)), axis=(0,3))
+            error = error + np.sum(H_X_gradient['H']*np.expand_dims(Y_error[:,t,:], axis=(1,2)), axis=-1)
             
             C_t_minus_1 = C_t
             H_t_minus_1 = H_t
