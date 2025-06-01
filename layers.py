@@ -337,18 +337,17 @@ class AddLayer:
 
 class MultiHeadAttentionLayer:
     
-    def __init__(self, T, F, NH=10, add_bias=True, dropout_p=0.0, use_causal_mask=False):
+    def __init__(self, F, NH=10, add_bias=True, dropout_p=0.0, use_causal_mask=False):
         if F % NH != 0:
             raise ValueError(f"The input size must be a multiple of the number of heads ({NH} here)")
         self.add_bias = add_bias
         self.dropout_p = dropout_p
-        self.T = T
+        self.use_causal_mask = use_causal_mask
         self.F = F
         self.NH = NH
         self.W_q = np.random.normal(loc=0, scale=1/self.F, size=(self.F, self.F)) # query input weights
         self.W_k = np.random.normal(loc=0, scale=1/self.F, size=(self.F, self.F)) # key input weights
         self.W_v = np.random.normal(loc=0, scale=1/self.F, size=(self.F, self.F)) # value input weights
-        self.mask = np.tril(np.ones((self.T, self.T))) if use_causal_mask else np.ones((self.T, self.T))
         
     def split(self, X):
         query_size = self.F // self.NH
@@ -360,6 +359,7 @@ class MultiHeadAttentionLayer:
         return np.reshape(X, (X.shape[0], X.shape[1], X.shape[2]*X.shape[3])) # (N x T x F)
     
     def forward(self, X_q, X_k=None, X_v=None, inference=True):
+        mask = np.tril(np.ones((X_q.shape[1], X_q.shape[1]))) if self.use_causal_mask else np.ones((X_q.shape[1], X_q.shape[1])) # (T x T)
         X_k = X_q.copy() if X_k is None else X_k
         X_v = X_q.copy() if X_v is None else X_v
         X = {'Q': X_q, 'K': X_k, 'V': X_v} # (N x T x F)
@@ -373,7 +373,7 @@ class MultiHeadAttentionLayer:
         H = {k: self.split(H[k]) for k in H} # (N x NH x T x F/NH)
         # Attention score
         S = H['Q']@np.transpose(H['K'], axes=(0,1,3,2)) # (N x NH x T x T)
-        S = S * np.expand_dims(self.mask, axis=(0,1)) # (N x NH x T x T)
+        S = S * np.expand_dims(mask, axis=(0,1)) # (N x NH x T x T)
         S = softmax(S / np.sqrt(self.F // self.NH), axis=(2,3)) # (N x NH x T x T)
         S = S@H['V'] # (N x NH x T x F/NH)
         # Attention score merge
@@ -381,6 +381,7 @@ class MultiHeadAttentionLayer:
         return S
         
     def backward(self, Y_error, X_q, X_k=None, X_v=None, l2=0.0):
+        mask = np.tril(np.ones((X_q.shape[1], X_q.shape[1]))) if self.use_causal_mask else np.ones((X_q.shape[1], X_q.shape[1])) # (T x T)
         X_k = X_q.copy() if X_k is None else X_k
         X_v = X_q.copy() if X_v is None else X_v
         X = {'Q': X_q, 'K': X_k, 'V': X_v} # (N x T x F)
@@ -394,7 +395,7 @@ class MultiHeadAttentionLayer:
         # Attention score (until softmax)
         query_size = self.F // self.NH
         S = H['Q']@np.transpose(H['K'], axes=(0,1,3,2)) # (N x NH x T x T)
-        S = S * np.expand_dims(self.mask, axis=(0,1)) # (N x NH x T x T)
+        S = S * np.expand_dims(mask, axis=(0,1)) # (N x NH x T x T)
         S = softmax(S / np.sqrt(query_size), axis=(2,3)) # (N x NH x T x T)
         # Compute W_q gradient
         W_q_gradient = (S*(1-S)) * (Y_error @ np.transpose(H['V'], axes=(0,1,3,2))) # (N x NH x T x T)
@@ -435,22 +436,22 @@ class MultiHeadAttentionLayer:
 
 class BaseAttentionLayer:
     
-    def __init__(self, T, F, NH=10, add_bias=True, dropout_p=0.0, use_causal_mask=False):
-        self.mha_layer = MultiHeadAttentionLayer(T, F, NH=NH, add_bias=add_bias, dropout_p=dropout_p, use_causal_mask=use_causal_mask)
+    def __init__(self, F, NH=10, add_bias=True, dropout_p=0.0, use_causal_mask=False):
+        self.mha_layer = MultiHeadAttentionLayer(F, NH=NH, add_bias=add_bias, dropout_p=dropout_p, use_causal_mask=use_causal_mask)
         self.norm_layer = LayerNormalization()
         self.add_layer = AddLayer()
         
     def forward(self, X_q, X_k=None, X_v=None, X_skip=None, inference=True):
-        X_mha = self.mha_layer.forward(X_q, X_k, X_v, inference=inference)
-        X_add = self.add_layer.forward([X_mha, X_q if X_skip is None else X_skip])
-        return self.norm_layer.forward(X_add)
+        X = self.mha_layer.forward(X_q, X_k, X_v, inference=inference)
+        X = self.add_layer.forward([X, X_q if X_skip is None else X_skip])
+        return self.norm_layer.forward(X)
     
     def backward(self, Y_error, X_q, X_k=None, X_v=None, X_skip=None, l2=0.0):
         X_mha = self.mha_layer.forward(X_q, X_k, X_v, inference=False)
         X_add = self.add_layer.forward([X_mha, X_q if X_skip is None else X_skip])
-        norm_gradients, X_add_error = self.norm_layer.backward(X_add, Y_error, l2=l2)
-        X_mha_error, X_skip_error = self.add_layer.backward([X_mha, X_q if X_skip is None else X_skip], X_add_error)
-        mha_gradients, (X_q_error, X_k_error, X_v_error) = self.mha_layer.backward(X_mha_error, X_q, X_k, X_v, l2=l2)
+        norm_gradients, Y_error = self.norm_layer.backward(X_add, Y_error, l2=l2)
+        Y_error, X_skip_error = self.add_layer.backward([X_mha, X_q if X_skip is None else X_skip], Y_error)
+        mha_gradients, (X_q_error, X_k_error, X_v_error) = self.mha_layer.backward(Y_error, X_q, X_k, X_v, l2=l2)
         gradients = {
             'W_q_gradient': mha_gradients['W_q_gradient']
             , 'W_k_gradient': mha_gradients['W_k_gradient']
@@ -467,8 +468,8 @@ class BaseAttentionLayer:
 
 class CrossAttentionLayer(BaseAttentionLayer):
     
-    def __init__(self, T, F, NH=10, add_bias=True, dropout_p=0.0, use_causal_mask=False):
-        super().__init__(T, F, NH=NH, add_bias=add_bias, dropout_p=dropout_p, use_causal_mask=use_causal_mask)
+    def __init__(self, F, NH=10, add_bias=True, dropout_p=0.0, use_causal_mask=False):
+        super().__init__(F, NH=NH, add_bias=add_bias, dropout_p=dropout_p, use_causal_mask=use_causal_mask)
         
     def forward(self, X, X_context, inference=True):
         return super().forward(X_q=X, X_k=X_context, X_v=X_context, X_skip=X, inference=inference)
@@ -481,8 +482,8 @@ class CrossAttentionLayer(BaseAttentionLayer):
 
 class SelfAttentionLayer(BaseAttentionLayer):
     
-    def __init__(self, T, F, NH=10, add_bias=True, dropout_p=0.0, use_causal_mask=False):
-        super().__init__(T, F, NH=NH, add_bias=add_bias, dropout_p=dropout_p, use_causal_mask=use_causal_mask)
+    def __init__(self, F, NH=10, add_bias=True, dropout_p=0.0, use_causal_mask=False):
+        super().__init__(F, NH=NH, add_bias=add_bias, dropout_p=dropout_p, use_causal_mask=use_causal_mask)
         
     def forward(self, X, inference=True):
         return super().forward(X_q=X, X_k=X, X_v=X, X_skip=X, inference=inference)
