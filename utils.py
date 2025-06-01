@@ -2,6 +2,26 @@
 import numpy as np
 
 
+def mse(Y, Y_pred, axis=0):
+    """
+    Compute the mean square error: MSE = sum((Y-Y_pred)**2)
+    Arguments:
+     - Y      (np.ndarray)         - target actuals
+     - Y_pred (np.ndarray)         - predicted target
+     - axis (Any[int, tuple(int)]) - axis along which to average out
+    """
+    return np.mean(np.square(Y-Y_pred), axis=axis)
+
+def r_square(Y, Y_pred, axis=0):
+    """
+    Compute the R²: R² = 1 - sum((Y-Y_pred)**2) / sum((Y-Y_mean)**2)
+    Arguments:
+     - Y      (np.ndarray)         - target actuals
+     - Y_pred (np.ndarray)         - predicted target
+     - axis (Any[int, tuple(int)]) - axis along which to sum
+    """
+    return 1 - np.sum(np.square(Y-Y_pred), axis=axis) / np.sum(np.square(Y-np.mean(Y, axis=axis)), axis=axis)
+
 def sigmoid(x, safety_threshold=200):
     """
     Return the sigmoid of the input: s(x) = 1 / (1 + exp(-x))
