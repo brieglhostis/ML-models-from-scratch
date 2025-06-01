@@ -31,7 +31,7 @@ class DenseLayer:
     def update(self, W_gradient):
         self.W += W_gradient
 
-        
+
 class RecurrentLayer:
     
     def __init__(self, T, F, D, add_bias=True, dropout_p=0.0):
@@ -57,6 +57,7 @@ class RecurrentLayer:
         return H
     
     def backward(self, X, Y_error, l2=0.0):
+        H = self.forward(X, inference=True)
         if self.add_bias:
             X = np.array([np.c_[x, np.ones(self.T)] for x in X])
             
@@ -64,27 +65,19 @@ class RecurrentLayer:
         non_bias_W = self.W[:-1] if self.add_bias else self.W
         non_bias_F = non_bias_W.shape[0]
         
-        H = np.zeros((N, self.D)) # Output
         W_gradient = np.zeros((self.F, self.D)) # W gradient
-        H_W_gradient = np.zeros((N, self.F, self.D, self.D)) # Derivative of H wrt W
         V_gradient = np.zeros((self.D, self.D)) # V gradient
-        H_V_gradient = np.zeros((N, self.D, self.D, self.D)) # Derivative of H wrt V
-        error = np.zeros((N, self.T, non_bias_F)) # Propagated error
-        H_X_gradient = np.zeros((N, self.T, non_bias_F, self.D)) # Derivative of H wrt X
-        for t in range(self.T):
-            H_W_gradient = np.expand_dims(X[:,t,:], axis=(-2,-1)) + H_W_gradient @ self.V
-            H_V_gradient = np.array([[H[n,d]*np.eye(self.D) for d in range(self.D)] for n in range(N)]) + H_V_gradient @ self.V
-            H = X[:,t,:] @ self.W + H @ self.V
-            H_X_gradient[:,t,:,:] = np.repeat(np.expand_dims(non_bias_W, axis=0), N, axis=0)
-            for s in range(t):
-                H_X_gradient[:,s,:,:] = H_X_gradient[:,s,:,:] @ self.V
-            W_gradient = W_gradient + np.sum(H_W_gradient*np.expand_dims(Y_error[:,t,:], axis=(1,2)), axis=(0,3))
-            V_gradient = V_gradient + np.sum(H_V_gradient*np.expand_dims(Y_error[:,t,:], axis=(1,2)), axis=(0,3))
-            error = error + np.sum(H_X_gradient*np.expand_dims(Y_error[:,t,:], axis=(1,2)), axis=-1)
-                    
+        X_error = np.zeros((N, self.T, non_bias_F)) # Propagated error
+        for t in range(self.T-1,0,-1):
+            W_gradient += X[:,t,:].T@Y_error[:,t,:]
+            X_error[:,t,:] = Y_error[:,t,:]@non_bias_W.T
+            if t > 0:
+                V_gradient += H[:,t-1,:].T@Y_error[:,t,:]
+                Y_error[:,t-1,:] = Y_error[:,t,:]@self.V.T
+                
         W_gradient = W_gradient + 2*l2 * self.W / self.F / self.D
         V_gradient = V_gradient + 2*l2 * self.V / self.D / self.D
-        return {'W_gradient': W_gradient, 'V_gradient': V_gradient}, error
+        return {'W_gradient': W_gradient, 'V_gradient': V_gradient}, X_error
     
     def update(self, W_gradient, V_gradient):
         self.W += W_gradient
