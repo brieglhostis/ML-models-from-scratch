@@ -27,8 +27,11 @@ class LayerNormalization:
         beta_gradient = np.sum(Y_error, axis=(0,1), keepdims=True) + 2*l2 * self.beta / self.beta.shape[-1]
         # Propagated error
         F = X.shape[-1]
-        X_error = F * Y_error - np.sum(Y_error, axis=-1, keepdims=True) - np.sum(Y_error * X_norm, axis=-1, keepdims=True)
-        X_error *= self.gamma / safe_sigma / F
+        X_error = (
+            F * Y_error 
+            - (1-self.alpha) * np.sum(Y_error, axis=agg_axis, keepdims=True) 
+            - (1-self.alpha) * np.sum(Y_error * X_norm, axis=agg_axis, keepdims=True) * (X_norm - np.sum(X_norm, axis=agg_axis, keepdims=True) / F)
+        ) * self.gamma / safe_sigma / F
         return {'gamma_gradient': gamma_gradient, 'beta_gradient': beta_gradient}, X_error
     
     def update(self, gamma_gradient, beta_gradient):
@@ -71,13 +74,16 @@ class BatchNormalization:
             self.sigma = np.sqrt(self.var)
         safe_sigma = np.sqrt(self.var + self.epsilon)
         X_norm = (X-self.mu) / safe_sigma
-        N = X.shape[0] if len(X.shape) == 2 else X.shape[0] * X.shape[1]
         # Parameter gradients
         gamma_gradient = np.sum(Y_error * X_norm, axis=agg_axis, keepdims=True) + 2*l2 * self.gamma / self.gamma.shape[-1]
         beta_gradient = np.sum(Y_error, axis=agg_axis, keepdims=True) + 2*l2 * self.beta / self.beta.shape[-1]
         # Propagated error
-        X_error = N * Y_error - (1-self.alpha) * np.sum(Y_error, axis=agg_axis, keepdims=True) - (1-self.alpha) * np.sum(Y_error * X_norm, axis=agg_axis, keepdims=True)
-        X_error *= self.gamma / safe_sigma / N
+        N = X.shape[0] if len(X.shape) == 2 else X.shape[0] * X.shape[1]
+        X_error = (
+            N * Y_error 
+            - (1-self.alpha) * np.sum(Y_error, axis=agg_axis, keepdims=True) 
+            - (1-self.alpha) * np.sum(Y_error * X_norm, axis=agg_axis, keepdims=True) * (X_norm - np.sum(X_norm, axis=agg_axis, keepdims=True) / N)
+        ) * self.gamma / safe_sigma / N
         return {'gamma_gradient': gamma_gradient, 'beta_gradient': beta_gradient}, X_error
     
     def update(self, gamma_gradient, beta_gradient):

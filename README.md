@@ -8,8 +8,8 @@ Finalised models
 - **Linear regression** (including Ridge and Lasso regressions)
 
 Work in progress
-- **Regular regression neural network** (Dense layers only): batch normalization gradients to correct
-- **Recurrent neural network** (RNN & LSTM): batch normalization gradients to correct
+- **Regular regression neural network** (Dense layers only): ADAM optimizer
+- **Recurrent neural network** (RNN & LSTM): ADAM optimizer, bidirectionnal layers
 - **Transformer**: WIP
 
 Next models
