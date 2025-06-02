@@ -211,12 +211,11 @@ class RegressionRecurrentNeuralNetwork:
     GRADIENT_DESCENT_METHODS = ["Regular", "RMSProp", "AdaGrad"]
     
     def __init__(
-        self, T, F, D, layer_sizes=[10], add_bias=[True, True], layer_types=['Recurrent', 'Dense'], activations=[ReLuActivation, LinearActivation]
+        self, F, D, layer_sizes=[10], add_bias=[True, True], layer_types=['Recurrent', 'Dense'], activations=[ReLuActivation, LinearActivation]
         , l2=0.0, dropout_p=0.0, batch_normalization=False, batch_normalization_alpha=0.0):
         
         assert all([t in self.LAYER_TYPES for t in layer_types])
         
-        self.T = T
         self.F = F
         self.D = D
         
@@ -226,7 +225,7 @@ class RegressionRecurrentNeuralNetwork:
         
         self.layer_sizes = layer_sizes
         self.layers = [
-            RecurrentLayer(T, f, d, b, dropout_p=p) if t == 'Recurrent' else LSTMLayer(T, f, d, b, dropout_p=p) if t == 'LSTM' else DenseLayer(f, d, b, dropout_p=p)
+            RecurrentLayer(f, d, b, dropout_p=p) if t == 'Recurrent' else LSTMLayer(f, d, b, dropout_p=p) if t == 'LSTM' else DenseLayer(f, d, b, dropout_p=p)
             for f, d, b, t, p in zip([F]+self.layer_sizes, self.layer_sizes+[D], add_bias, layer_types, [0.0]+self.dropout_p)
         ]
         self.activations = [
@@ -248,12 +247,7 @@ class RegressionRecurrentNeuralNetwork:
         layer_input = X.copy()
         layer_inputs = [] if inference else [layer_input]
         for layer, activation, batch_normalization in zip(self.layers, self.activations, self.batch_normalization_layers):
-            if isinstance(layer, RecurrentLayer) or isinstance(layer, LSTMLayer):
-                activation_input = layer.forward(layer_input, inference=inference)
-            elif isinstance(layer, DenseLayer):
-                flat_layer_input = np.reshape(layer_input, (layer_input.shape[0]*layer_input.shape[1], layer_input.shape[2]))
-                flat_activation_input = layer.forward(flat_layer_input, inference=inference)
-                activation_input = np.reshape(flat_activation_input, (layer_input.shape[0], layer_input.shape[1], flat_activation_input.shape[-1]))
+            activation_input = layer.forward(layer_input, inference=inference)
             batch_normalization_input = activation.forward(activation_input)
             layer_input = batch_normalization.forward(batch_normalization_input, inference=inference) if batch_normalization is not None else batch_normalization_input
             if not inference:
@@ -285,7 +279,7 @@ class RegressionRecurrentNeuralNetwork:
 
                 # Back propagation
                 Y_pred = layer_inputs.pop(-1)
-                layer_error = (Y_batch - Y_pred) / Y_batch.shape[0] / self.T
+                layer_error = (Y_batch - Y_pred) / Y_batch.shape[0] / Y_batch.shape[1]
                 layer_gradients = []
                 batch_normalization_gradients = []
                 activation_inputs = layer_inputs[1::3]
@@ -297,13 +291,7 @@ class RegressionRecurrentNeuralNetwork:
                     else:
                         (gamma_gradient, beta_gradient), layer_error = batch_normalization.backward(batch_normalization_input, layer_error)
                     layer_error = activation.backward(activation_input) * layer_error
-                    if isinstance(layer, RecurrentLayer) or isinstance(layer, LSTMLayer):
-                        layer_gradient, layer_error = layer.backward(layer_input, layer_error, l2=self.l2)
-                    elif isinstance(layer, DenseLayer):
-                        flat_layer_input = np.reshape(layer_input, (layer_input.shape[0]*layer_input.shape[1], layer_input.shape[2]))
-                        flat_layer_error = np.reshape(layer_error, (layer_error.shape[0]*layer_error.shape[1], layer_error.shape[2]))
-                        layer_gradient, flat_layer_error = layer.backward(flat_layer_input, flat_layer_error, l2=self.l2)
-                        layer_error = np.reshape(flat_layer_error, (layer_error.shape[0], layer_error.shape[1], flat_layer_error.shape[-1]))
+                    layer_gradient, layer_error = layer.backward(layer_input, layer_error, l2=self.l2)
                     layer_gradients = [layer_gradient] + layer_gradients
                     batch_normalization_gradients = [{'gamma_gradient': gamma_gradient, 'beta_gradient': beta_gradient}] + batch_normalization_gradients
 
@@ -354,3 +342,5 @@ class RegressionRecurrentNeuralNetwork:
             
             if verbose and (e+1) % 20 == 0:
                 print(f"Epoch {e+1}/{epochs} - train loss = {metrics['train_mse'].mean():.4f}" + (f", validation loss = {metrics['val_mse'].mean():.4f}" if 'val_mse' in metrics else ""))
+        
+        return self.history

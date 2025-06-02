@@ -15,17 +15,29 @@ class DenseLayer:
         self.W = np.random.normal(loc=0, scale=1/self.F, size=(self.F, self.D))
     
     def forward(self, X, inference=True):
+        assert len(X.shape) in [2, 3]
         if self.add_bias:
-            X = np.c_[X, np.ones(X.shape[0])]
+            if len(X.shape) == 2:
+                X = np.c_[X, np.ones(X.shape[0])]
+            else: 
+                X = np.array([np.c_[x, np.ones(X.shape[1])] for x in X])
         if not inference and self.dropout_p > 0.0 and self.dropout_p < 1.0:
-            return X@(self.W * np.where(np.random.random(size=self.W.shape)>self.dropout_p, 1.0, 0.0) / (1-self.dropout_p))
-        return X@self.W
+            return X @ (self.W * np.where(np.random.random(size=self.W.shape)>self.dropout_p, 1.0, 0.0) / (1-self.dropout_p))
+        return X @ self.W
     
     def backward(self, X, Y_error, l2=0.0):
+        assert len(X.shape) in [2, 3]
         if self.add_bias:
-            X = np.c_[X, np.ones(X.shape[0])]
-        W_gradient = X.T@Y_error + 2*l2 * self.W / self.F / self.D
-        error = Y_error@(self.W[:-1] if self.add_bias else self.W).T
+            if len(X.shape) == 2:
+                X = np.c_[X, np.ones(X.shape[0])]
+            else: 
+                X = np.array([np.c_[x, np.ones(X.shape[1])] for x in X])
+        if len(X.shape) == 2:
+            W_gradient = X.T @ Y_error
+        else:
+            W_gradient = np.sum(np.transpose(X, axes= (0,2,1)) @ Y_error, axis=0)
+        W_gradient = W_gradient + 2*l2 * self.W / self.F / self.D
+        error = Y_error @ (self.W[:-1] if self.add_bias else self.W).T
         return {'W_gradient': W_gradient}, error
     
     def update(self, W_gradient):
@@ -34,10 +46,9 @@ class DenseLayer:
 
 class RecurrentLayer:
     
-    def __init__(self, T, F, D, add_bias=True, dropout_p=0.0):
+    def __init__(self, F, D, add_bias=True, dropout_p=0.0):
         self.add_bias = add_bias
         self.dropout_p = dropout_p
-        self.T = T
         self.F = F+1 if self.add_bias else F
         self.D = D
         self.W = np.random.normal(loc=0, scale=1/self.F, size=(self.F, self.D)) # current input weights
@@ -45,35 +56,37 @@ class RecurrentLayer:
         
     def forward(self, X, inference=True):
         if self.add_bias:
-            X = np.array([np.c_[x, np.ones(self.T)] for x in X])
+            X = np.array([np.c_[x, np.ones(X.shape[1])] for x in X])
         if not inference and self.dropout_p > 0.0 and self.dropout_p < 1.0:
             W = self.W * np.where(np.random.random(size=self.W.shape)>self.dropout_p, 1.0, 0.0) / (1-self.dropout_p)
             V = self.V * np.where(np.random.random(size=self.V.shape)>self.dropout_p, 1.0, 0.0) / (1-self.dropout_p)
         else:
             W, V = self.W, self.V
-        H = np.zeros((X.shape[0], self.T, self.D))
-        for t in range(self.T):
-            H[:,t,:] = X[:,t,:]@W + H[:,t-1,:]@V if t > 0 else X[:,t,:]@W
+        H = np.zeros((X.shape[0], X.shape[1], self.D))
+        for t in range(X.shape[1]):
+            H[:,t,:] = X[:,t,:] @ W + H[:,t-1,:] @ V if t > 0 else X[:,t,:] @ W
         return H
     
     def backward(self, X, Y_error, l2=0.0):
-        H = self.forward(X, inference=True)
         if self.add_bias:
-            X = np.array([np.c_[x, np.ones(self.T)] for x in X])
-            
-        N = X.shape[0]
-        non_bias_W = self.W[:-1] if self.add_bias else self.W
-        non_bias_F = non_bias_W.shape[0]
+            X = np.array([np.c_[x, np.ones(X.shape[1])] for x in X])
         
+        # Forward pass
+        H = np.zeros((X.shape[0], X.shape[1], self.D))
+        for t in range(X.shape[1]):
+            H[:,t,:] = X[:,t,:] @ self.W + H[:,t-1,:] @ self.V if t > 0 else X[:,t,:] @ self.W
+        
+        # Back Propagation Through Time (BPTT)
+        non_bias_W = self.W[:-1] if self.add_bias else self.W
         W_gradient = np.zeros((self.F, self.D)) # W gradient
         V_gradient = np.zeros((self.D, self.D)) # V gradient
-        X_error = np.zeros((N, self.T, non_bias_F)) # Propagated error
-        for t in range(self.T-1,0,-1):
-            W_gradient += X[:,t,:].T@Y_error[:,t,:]
-            X_error[:,t,:] = Y_error[:,t,:]@non_bias_W.T
+        X_error = np.zeros((X.shape[0], X.shape[1], non_bias_W.shape[0])) # Propagated error
+        for t in range(X.shape[1]-1,0,-1):
+            W_gradient += X[:,t,:].T @ Y_error[:,t,:]
+            X_error[:,t,:] = Y_error[:,t,:] @ non_bias_W.T
             if t > 0:
-                V_gradient += H[:,t-1,:].T@Y_error[:,t,:]
-                Y_error[:,t-1,:] = Y_error[:,t,:]@self.V.T
+                V_gradient += H[:,t-1,:].T @ Y_error[:,t,:]
+                Y_error[:,t-1,:] = Y_error[:,t,:] @ self.V.T
                 
         W_gradient = W_gradient + 2*l2 * self.W / self.F / self.D
         V_gradient = V_gradient + 2*l2 * self.V / self.D / self.D
@@ -86,10 +99,9 @@ class RecurrentLayer:
         
 class LSTMLayer:
     
-    def __init__(self, T, F, D, add_bias=True, dropout_p=0.0):
+    def __init__(self, F, D, add_bias=True, dropout_p=0.0):
         self.add_bias = add_bias
         self.dropout_p = dropout_p
-        self.T = T
         self.F = F+1 if self.add_bias else F
         self.D = D
         self.W_forget = np.random.normal(loc=0, scale=1/self.F, size=(self.F, self.D))
@@ -105,22 +117,21 @@ class LSTMLayer:
 
     def forward(self, X, inference=True):
         if self.add_bias:
-            X = np.array([np.c_[x, np.ones(self.T)] for x in X])
-        N = X.shape[0]
+            X = np.array([np.c_[x, np.ones(X.shape[1])] for x in X])
         W = {'f': self.W_forget, 'i': self.W_input, 'o': self.W_output, 'c': self.W_concat}
         U = {'f': self.U_forget, 'i': self.U_input, 'o': self.U_output, 'c': self.U_concat}
         if not inference and self.dropout_p > 0.0 and self.dropout_p < 1.0:
             for k in ['f', 'i', 'o', 'c']:
                 W[k] = W[k] * np.where(np.random.random(size=W[k].shape)>self.dropout_p, 1.0, 0.0) / (1-self.dropout_p)
                 U[k] = U[k] * np.where(np.random.random(size=U[k].shape)>self.dropout_p, 1.0, 0.0) / (1-self.dropout_p)
-        tmp = {k: np.zeros((N, self.D)) for k in ['f', 'i', 'o', 'c']}
-        C_t = np.zeros((N, self.D))
-        C_t_minus_1 = np.zeros((N, self.D))
-        H = np.zeros((N, self.T, self.D))
-        for t in range(self.T):
+        tmp = {k: np.zeros((X.shape[0], self.D)) for k in ['f', 'i', 'o', 'c']}
+        C_t = np.zeros((X.shape[0], self.D))
+        C_t_minus_1 = np.zeros((X.shape[0], self.D))
+        H = np.zeros((X.shape[0], X.shape[1], self.D))
+        for t in range(X.shape[1]):
             for k in ['f', 'i', 'o', 'c']:
                 activation_function = tanh if k == 'c' else sigmoid
-                tmp[k] = activation_function(X[:,t,:]@W[k] + H[:,t-1,:]@U[k] if t > 0 else X[:,t,:]@W[k])
+                tmp[k] = activation_function(X[:,t,:] @ W[k] + H[:,t-1,:] @ U[k] if t > 0 else X[:,t,:] @ W[k])
             C_t = tmp['i'] * tmp['c'] + tmp['f'] * C_t_minus_1 if t > 0 else tmp['i'] * tmp['c']
             C_t_minus_1 = C_t
             H[:,t,:] = tmp['o'] * tanh(C_t)
@@ -128,109 +139,67 @@ class LSTMLayer:
     
     def backward(self, X, Y_error, l2=0.0):
         if self.add_bias:
-            X = np.array([np.c_[x, np.ones(self.T)] for x in X])
+            X = np.array([np.c_[x, np.ones(X.shape[1])] for x in X])
             
-        N = X.shape[0]
+        # Forward pass
         W = {'f': self.W_forget, 'i': self.W_input, 'o': self.W_output, 'c': self.W_concat}
         U = {'f': self.U_forget, 'i': self.U_input, 'o': self.U_output, 'c': self.U_concat}
-        non_bias_W = {k: w[:-1] if self.add_bias else w for k, w in W.items()}
-        non_bias_F = self.F-1 if self.add_bias else self.F
-        
-        tmp = {k: np.zeros((N, self.D)) for k in ['f', 'i', 'o', 'c']}
-        C_t = np.zeros((N, self.D)) # Concat at time t
-        C_t_minus_1 = np.zeros((N, self.D)) # Concat at time t-1
-        H_t = np.zeros((N, self.D)) # Output at time t
-        H_t_minus_1 = np.zeros((N, self.D)) # Output at time t-1
-        W_gradient = {k: np.zeros((self.F, self.D)) for k in ['f', 'i', 'o', 'c']} # W gradient
-        C_W_gradient = {k: np.zeros((N, self.F, self.D, self.D)) for k in ['f', 'i', 'c']} # Derivative of C wrt W
-        H_W_gradient = {k: np.zeros((N, self.F, self.D, self.D)) for k in ['f', 'i', 'o', 'c']} # Derivative of H wrt W
-        U_gradient = {k: np.zeros((self.D, self.D)) for k in ['f', 'i', 'o', 'c']} # W gradient
-        C_U_gradient = {k: np.zeros((N, self.D, self.D, self.D)) for k in ['f', 'i', 'c']} # Derivative of C wrt W
-        H_U_gradient = {k: np.zeros((N, self.D, self.D, self.D)) for k in ['f', 'i', 'o', 'c']} # Derivative of H wrt W
-        error = np.zeros((N, self.T, non_bias_F)) # Propagated error
-        H_X_gradient = {k: np.zeros((N, self.T, non_bias_F, self.D)) for k in ['f', 'i', 'o', 'c', 'C', 'H']} # Derivative of H wrt X
-        for t in range(self.T):
+        tmp = {k: np.zeros((X.shape[0], self.D)) for k in ['f', 'i', 'o', 'c']}
+        C = np.zeros((X.shape[0], X.shape[1], self.D))
+        H = np.zeros((X.shape[0], X.shape[1], self.D))
+        for t in range(X.shape[1]):
             for k in ['f', 'i', 'o', 'c']:
                 activation_function = tanh if k == 'c' else sigmoid
-                tmp[k] = activation_function(X[:,t,:]@W[k] + H_t@U[k] if t > 0 else X[:,t,:]@W[k])
-            C_t = tmp['i'] * tmp['c'] + tmp['f'] * C_t_minus_1
-            tanh_c_t = tanh(C_t)
-            o_t_tanh_prime_c_t = tmp['o'] * (1-np.square(tanh_c_t))
-            H_t = tmp['o'] * tanh_c_t
+                tmp[k] = activation_function(X[:,t,:] @ W[k] + H[:,t-1,:] @ U[k] if t > 0 else X[:,t,:] @ W[k])
+            C[:,t,:] = tmp['i'] * tmp['c'] + tmp['f'] * C[:,t-1,:] if t > 0 else tmp['i'] * tmp['c']
+            H[:,t,:] = tmp['o'] * tanh(C[:,t,:])
             
-            # Forget gate
-            C_W_gradient['f'] =np.expand_dims(tmp['f'], axis=(1,2)) * (
-                np.expand_dims((1-tmp['f'])*C_t_minus_1, axis=(1,2)) * (
-                    np.expand_dims(X[:,t,:], axis=(2,3)) + 
-                    H_W_gradient['f'] @ U['f']) + 
-                 C_W_gradient['f'])
-            H_W_gradient['f'] = np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)) * C_W_gradient['f']
-            C_U_gradient['f'] = np.expand_dims(tmp['f'], axis=(1,2)) * (
-                np.expand_dims((1-tmp['f'])*C_t_minus_1, axis=(1,2)) * (
-                    np.array([[H_t_minus_1[n,d]*np.eye(self.D) for d in range(self.D)] for n in range(N)]) + 
-                    H_U_gradient['f'] @ U['f']) + 
-                C_U_gradient['f'])
-            H_U_gradient['f'] = np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)) * C_U_gradient['f']
-
-            # Input gate
-            C_W_gradient['i'] = (
-                np.expand_dims(tmp['c']*tmp['i']*(1-tmp['i']), axis=(1,2)) * (
-                    np.expand_dims(X[:,t,:], axis=(2,3)) + 
-                    H_W_gradient['i'] @ U['i']) + 
-                np.expand_dims(tmp['f'], axis=(1,2)) * C_W_gradient['i'])
-            H_W_gradient['i'] = np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)) * C_W_gradient['i']
-            C_U_gradient['i'] = (
-                np.expand_dims(tmp['c']*tmp['i']*(1-tmp['i']), axis=(1,2)) * (
-                    np.array([[H_t_minus_1[n,d]*np.eye(self.D) for d in range(self.D)] for n in range(N)]) + 
-                    H_U_gradient['i'] @ U['i']) + 
-                np.expand_dims(tmp['f'], axis=(1,2)) * C_U_gradient['i'])
-            H_U_gradient['i'] = np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)) * C_U_gradient['i']
-
-            # Output gate 
-            H_W_gradient['o'] = np.expand_dims(tmp['o']*(1-tmp['o']) * tanh_c_t, axis=(1,2)) * (
-                np.expand_dims(X[:,t,:], axis=(2,3)) + 
-                H_W_gradient['o'] @ U['o'])
-            H_U_gradient['o'] = np.expand_dims(tmp['o']*(1-tmp['o']) * tanh_c_t, axis=(1,2)) * (
-                np.array([[H_t_minus_1[n,d]*np.eye(self.D) for d in range(self.D)] for n in range(N)]) + 
-                H_U_gradient['o'] @ U['o'])
-
-            # Concat gate
-            C_W_gradient['c'] = (
-                np.expand_dims(tmp['i']*(1-np.square(tmp['c'])), axis=(1,2)) * (
-                    np.expand_dims(X[:,t,:], axis=(2,3)) + 
-                    H_W_gradient['c'] @ U['c']) + 
-                np.expand_dims(tmp['f'], axis=(1,2)) * C_W_gradient['c'])
-            H_W_gradient['c'] = np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)) * C_W_gradient['c']
-            C_U_gradient['c'] = (
-                np.expand_dims(tmp['i']*(1-np.square(tmp['c'])), axis=(1,2)) * (
-                    np.array([[H_t_minus_1[n,d]*np.eye(self.D) for d in range(self.D)] for n in range(N)]) + 
-                    H_U_gradient['c'] @ U['c']) + 
-                np.expand_dims(tmp['f'], axis=(1,2)) * C_U_gradient['c'])
-            H_U_gradient['c'] = np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)) * C_U_gradient['c']
-
-            # Propagated error
+        # Back Propagation Through Time (BPTT)
+        non_bias_W = {k: w[:-1] if self.add_bias else w for k, w in W.items()}
+        non_bias_F = self.F-1 if self.add_bias else self.F
+        W_gradient = {k: np.zeros((self.F, self.D)) for k in ['f', 'i', 'o', 'c']} # W gradient
+        U_gradient = {k: np.zeros((self.D, self.D)) for k in ['f', 'i', 'o', 'c']} # W gradient
+        C_error = np.zeros((X.shape[0], X.shape[1], self.D)) # Propagated error on C
+        X_error = np.zeros((X.shape[0], X.shape[1], non_bias_F)) # Propagated error on X
+        for t in range(X.shape[1]-1,0,-1):
             for k in ['f', 'i', 'o', 'c']:
-                activation_derivate = 1-np.square(tmp[k]) if k == 'c' else tmp[k]*(1-tmp[k])
-                H_X_gradient[k][:,t,:,:] = np.expand_dims(activation_derivate, axis=1) * np.repeat(np.expand_dims(non_bias_W[k], axis=0), N, axis=0)
-                for s in range(t):
-                    H_X_gradient[k][:,s,:,:] = np.expand_dims(activation_derivate, axis=1) * (H_X_gradient[k][:,s,:,:] @ U[k])
-            H_X_gradient['C'] = (
-                H_X_gradient['f'] * np.expand_dims(C_t_minus_1, axis=(1,2)) + 
-                H_X_gradient['C'] * np.expand_dims(tmp['f'], axis=(1,2)) + 
-                H_X_gradient['i'] * np.expand_dims(tmp['c'], axis=(1,2)) + 
-                H_X_gradient['c'] * np.expand_dims(tmp['i'], axis=(1,2)))
-            H_X_gradient['H'] = (
-                H_X_gradient['o'] * np.expand_dims(tanh_c_t, axis=(1,2)) + 
-                H_X_gradient['C'] * np.expand_dims(o_t_tanh_prime_c_t, axis=(1,2)))
+                activation_function = tanh if k == 'c' else sigmoid
+                tmp[k] = activation_function(X[:,t,:] @ W[k] + H[:,t-1,:] @ U[k] if t > 0 else X[:,t,:] @ W[k])
             
-            # Gradients
-            for k in W_gradient:
-                W_gradient[k] = W_gradient[k] + np.sum(H_W_gradient[k]*np.expand_dims(Y_error[:,t,:], axis=(1,2)), axis=(0,3))
-                U_gradient[k] = U_gradient[k] + np.sum(H_U_gradient[k]*np.expand_dims(Y_error[:,t,:], axis=(1,2)), axis=(0,3))
-            error = error + np.sum(H_X_gradient['H']*np.expand_dims(Y_error[:,t,:], axis=(1,2)), axis=-1)
+            # Output gate
+            tmp_error = Y_error[:,t,:] * tmp['o'] * (1 - tmp['o']) * tanh(C[:,t,:])
+            W_gradient['o'] += X[:,t,:].T @ tmp_error
+            X_error[:,t,:] += tmp_error @ non_bias_W['o'].T
+            if t > 0:
+                U_gradient['o'] += H[:,t-1,:].T @ tmp_error
+                Y_error[:,t-1,:] += tmp_error @ U['o'].T
+            C_error[:,t,:] += Y_error[:,t,:] * tmp['o'] * (1 - np.square(tanh(C[:,t,:])))
+                
+            # Concat gate
+            tmp_error = C_error[:,t,:] * tmp['i'] * (1 - np.square(tmp['c']))
+            W_gradient['c'] += X[:,t,:].T @ tmp_error
+            X_error[:,t,:] += tmp_error @ non_bias_W['c'].T
+            if t > 0:
+                U_gradient['c'] += H[:,t-1,:].T @ tmp_error
+                Y_error[:,t-1,:] += tmp_error @ U['c'].T
+                
+            # Input gate
+            tmp_error = C_error[:,t,:] * tmp['i'] * (1 - tmp['i']) * tmp['c']
+            W_gradient['i'] += X[:,t,:].T @ tmp_error
+            X_error[:,t,:] += tmp_error @ non_bias_W['i'].T
+            if t > 0:
+                U_gradient['i'] += H[:,t-1,:].T @ tmp_error
+                Y_error[:,t-1,:] += tmp_error @ U['i'].T
+                
+            # Forget gate
+            tmp_error = C_error[:,t,:] * tmp['f'] * (1 - tmp['f']) * C[:,t-1,:]
+            W_gradient['f'] += X[:,t,:].T @ tmp_error
+            X_error[:,t,:] += tmp_error @ non_bias_W['f'].T
+            if t > 0:
+                U_gradient['f'] += H[:,t-1,:].T @ tmp_error
+                Y_error[:,t-1,:] += tmp_error @ U['f'].T
+                C_error[:,t-1,:] = C_error[:,t,:] * tmp['f']
             
-            C_t_minus_1 = C_t
-            H_t_minus_1 = H_t
                 
         gradients = {
             'W_forget_gradient': W_gradient['f'] + 2*l2 * W['f'] / self.F / self.D
@@ -242,7 +211,7 @@ class LSTMLayer:
             , 'U_output_gradient': U_gradient['o'] + 2*l2 * U['o'] / self.D / self.D
             , 'U_concat_gradient': U_gradient['c'] + 2*l2 * U['c'] / self.D / self.D
         }
-        return gradients, error
+        return gradients, X_error
     
     def update(self, W_forget_gradient, W_input_gradient, W_output_gradient, W_concat_gradient, U_forget_gradient, U_input_gradient, U_output_gradient, U_concat_gradient):
         self.W_forget += W_forget_gradient
