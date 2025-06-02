@@ -144,13 +144,13 @@ class RegressionNeuralNetwork:
                 layer_inputs = layer_inputs[0::3]
                 for layer, activation, batch_normalization, layer_input, activation_input, batch_normalization_input in zip(self.layers[::-1], self.activations[::-1], self.batch_normalization_layers[::-1], layer_inputs[::-1], activation_inputs[::-1], batch_normalization_inputs[::-1]):
                     if batch_normalization is None:
-                        gamma_gradient, beta_gradient = 0.0, 0.0
+                        batch_normalization_gradient = {}
                     else:
-                        (gamma_gradient, beta_gradient), layer_error = batch_normalization.backward(batch_normalization_input, layer_error)
+                        batch_normalization_gradient, layer_error = batch_normalization.backward(batch_normalization_input, layer_error, l2=self.l2)
                     layer_error = activation.backward(activation_input) * layer_error
                     layer_gradient, layer_error = layer.backward(layer_input, layer_error, l2=self.l2)
                     layer_gradients = [layer_gradient] + layer_gradients
-                    batch_normalization_gradients = [{'gamma_gradient': gamma_gradient, 'beta_gradient': beta_gradient}] + batch_normalization_gradients
+                    batch_normalization_gradients = [batch_normalization_gradient] + batch_normalization_gradients
                 
                 # Layer updates
                 if gradient_descent_method == 'AdaGrad':
@@ -199,7 +199,7 @@ class RegressionNeuralNetwork:
                 metrics['val_r_square'] = r_square(Y_val, Y_pred_val)
             self.history.append(metrics)
             
-            if verbose and (e+1) % 20 == 0:
+            if verbose and (e+1) % 10 == 0:
                 print(f"Epoch {e+1}/{epochs} - train loss = {metrics['train_mse'].mean():.4f}" + (f", validation loss = {metrics['val_mse'].mean():.4f}" if 'val_mse' in metrics else ""))
             
         return self.history
@@ -232,7 +232,7 @@ class RegressionRecurrentNeuralNetwork:
             a() for a in activations
         ]
         self.batch_normalization_layers = [
-            RecurrentBatchNormalization(alpha=batch_normalization_alpha) for i in range(len(self.layers)-1)
+            BatchNormalization(alpha=batch_normalization_alpha) for i in range(len(self.layers)-1)
         ] + [None] if self.batch_normalization else [None] * len(self.layers)
         self.history = []
         
@@ -287,13 +287,13 @@ class RegressionRecurrentNeuralNetwork:
                 layer_inputs = layer_inputs[0::3]
                 for layer, activation, batch_normalization, layer_input, activation_input, batch_normalization_input in zip(self.layers[::-1], self.activations[::-1], self.batch_normalization_layers[::-1], layer_inputs[::-1], activation_inputs[::-1], batch_normalization_inputs[::-1]):
                     if batch_normalization is None:
-                        gamma_gradient, beta_gradient = 0.0, 0.0
+                        batch_normalization_gradient = {}
                     else:
-                        (gamma_gradient, beta_gradient), layer_error = batch_normalization.backward(batch_normalization_input, layer_error)
+                        batch_normalization_gradient, layer_error = batch_normalization.backward(batch_normalization_input, layer_error, l2=self.l2)
                     layer_error = activation.backward(activation_input) * layer_error
                     layer_gradient, layer_error = layer.backward(layer_input, layer_error, l2=self.l2)
                     layer_gradients = [layer_gradient] + layer_gradients
-                    batch_normalization_gradients = [{'gamma_gradient': gamma_gradient, 'beta_gradient': beta_gradient}] + batch_normalization_gradients
+                    batch_normalization_gradients = [batch_normalization_gradient] + batch_normalization_gradients
 
                 # Layer updates
                 if gradient_descent_method == 'AdaGrad':
@@ -340,7 +340,7 @@ class RegressionRecurrentNeuralNetwork:
                 metrics['val_mse'] = mse(Y_val, Y_pred_val, axis=(0,1))
             self.history.append(metrics)
             
-            if verbose and (e+1) % 20 == 0:
+            if verbose and (e+1) % 10 == 0:
                 print(f"Epoch {e+1}/{epochs} - train loss = {metrics['train_mse'].mean():.4f}" + (f", validation loss = {metrics['val_mse'].mean():.4f}" if 'val_mse' in metrics else ""))
         
         return self.history
