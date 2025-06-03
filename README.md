@@ -9,7 +9,7 @@ Finalised models
 
 Work in progress
 - **Regular regression neural network** (Dense layers only): ADAM optimizer
-- **Recurrent neural network** (RNN & LSTM): ADAM optimizer, bidirectionnal layers
+- **Recurrent neural network** (RNN & LSTM): ADAM optimizer, classification
 - **Transformer**: WIP
 
 Next models

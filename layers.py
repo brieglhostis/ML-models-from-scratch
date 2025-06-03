@@ -5,6 +5,30 @@ from utils import sigmoid, tanh, softmax, dummy_encode, one_hot_encode
 from normalization import LayerNormalization
 
 
+class AddLayer:
+    
+    def __init__(self):
+        return
+    
+    def forward(self, X):
+        return np.sum(X, axis=0)
+    
+    def backward(self, X, Y_error):
+        return np.repeat(np.expand_dims(Y_error, axis=0), len(X), axis=0)
+
+
+class ConcatLayer:
+    
+    def __init__(self):
+        return
+    
+    def forward(self, X):
+        return np.concatenate(X, axis=-1)
+    
+    def backward(self, X, Y_error):
+        return np.split(Y_error, 2, axis=-1)
+
+
 class DenseLayer:
     
     def __init__(self, F, D, add_bias=True, dropout_p=0.0):
@@ -199,7 +223,6 @@ class LSTMLayer:
                 U_gradient['f'] += H[:,t-1,:].T @ tmp_error
                 Y_error[:,t-1,:] += tmp_error @ U['f'].T
                 C_error[:,t-1,:] = C_error[:,t,:] * tmp['f']
-            
                 
         gradients = {
             'W_forget_gradient': W_gradient['f'] + 2*l2 * W['f'] / self.F / self.D
@@ -222,6 +245,102 @@ class LSTMLayer:
         self.U_input += U_input_gradient
         self.U_output += U_output_gradient
         self.U_concat += U_concat_gradient
+
+
+class BidirectionalRecurrentLayer:
+    
+    def __init__(self, F, D, add_bias=True, dropout_p=0.0, concat=True):
+        if concat:
+            if D % 2 != 0:
+                raise ValueError(f"Layer output dimension must be a multiple of 2 for concat aggregation (got {D})")
+            D = D // 2
+            self.agg_layer = ConcatLayer()
+        else:
+            self.agg_layer = AddLayer()
+        self.forward_layer = RecurrentLayer(F, D, add_bias=add_bias, dropout_p=dropout_p)
+        self.backward_layer = RecurrentLayer(F, D, add_bias=add_bias, dropout_p=dropout_p)
+        
+    def forward(self, X, inference=True):
+        return self.agg_layer.forward([
+            self.forward_layer.forward(X, inference=inference)
+            , self.backward_layer.forward(X[:,::-1,:], inference=inference)[:,::-1,:]
+        ])
+    
+    def backward(self, X, Y_error, l2=0.0):
+        Y_forward = self.forward_layer.forward(X, inference=False)
+        Y_backward = self.backward_layer.forward(X[:,::-1,:], inference=False)[:,::-1,:]
+        Y_error_forward, Y_error_backward = self.agg_layer.backward(X, Y_error)
+        gradients_forward, X_error_forward = self.forward_layer.backward(X, Y_error_forward, l2=l2)
+        gradients_backward, X_error_backward = self.backward_layer.backward(X[:,::-1,:], Y_error_backward[:,::-1,:], l2=l2)
+        gradients = {
+            'W_gradient_forward': gradients_forward['W_gradient']
+            , 'V_gradient_forward': gradients_forward['V_gradient']
+            , 'W_gradient_backward': gradients_backward['W_gradient']
+            , 'V_gradient_backward': gradients_backward['V_gradient']
+        }
+        return gradients, (X_error_forward + X_error_backward[:,::-1,:])
+    
+    def update(self, W_gradient_forward, V_gradient_forward, W_gradient_backward, V_gradient_backward):
+        self.forward_layer.update(W_gradient_forward, V_gradient_forward)
+        self.backward_layer.update(W_gradient_backward, V_gradient_backward)
+    
+
+class BidirectionalLSTMLayer:
+    
+    def __init__(self, F, D, add_bias=True, dropout_p=0.0, concat=True):
+        if concat:
+            if D % 2 != 0:
+                raise ValueError(f"Layer output dimension must be a multiple of 2 for concat aggregation (got {D})")
+            D = D // 2
+            self.agg_layer = ConcatLayer()
+        else:
+            self.agg_layer = AddLayer()
+        self.forward_layer = LSTMLayer(F, D, add_bias=add_bias, dropout_p=dropout_p)
+        self.backward_layer = LSTMLayer(F, D, add_bias=add_bias, dropout_p=dropout_p)
+        
+    def forward(self, X, inference=True):
+        return self.agg_layer.forward([
+            self.forward_layer.forward(X, inference=inference)
+            , self.backward_layer.forward(X[:,::-1,:], inference=inference)[:,::-1,:]
+        ])
+    
+    def backward(self, X, Y_error, l2=0.0):
+        Y_forward = self.forward_layer.forward(X, inference=False)
+        Y_backward = self.backward_layer.forward(X[:,::-1,:], inference=False)[:,::-1,:]
+        Y_error_forward, Y_error_backward = self.agg_layer.backward(X, Y_error)
+        gradients_forward, X_error_forward = self.forward_layer.backward(X, Y_error_forward, l2=l2)
+        gradients_backward, X_error_backward = self.backward_layer.backward(X[:,::-1,:], Y_error_backward[:,::-1,:], l2=l2)
+        gradients = {
+            'W_forget_gradient_forward': gradients_forward['W_forget_gradient']
+            , 'W_input_gradient_forward': gradients_forward['W_input_gradient']
+            , 'W_output_gradient_forward': gradients_forward['W_output_gradient']
+            , 'W_concat_gradient_forward': gradients_forward['W_concat_gradient']
+            , 'U_forget_gradient_forward': gradients_forward['U_forget_gradient']
+            , 'U_input_gradient_forward': gradients_forward['U_input_gradient']
+            , 'U_output_gradient_forward': gradients_forward['U_output_gradient']
+            , 'U_concat_gradient_forward': gradients_forward['U_concat_gradient']
+            , 'W_forget_gradient_backward': gradients_backward['W_forget_gradient']
+            , 'W_input_gradient_backward': gradients_backward['W_input_gradient']
+            , 'W_output_gradient_backward': gradients_backward['W_output_gradient']
+            , 'W_concat_gradient_backward': gradients_backward['W_concat_gradient']
+            , 'U_forget_gradient_backward': gradients_backward['U_forget_gradient']
+            , 'U_input_gradient_backward': gradients_backward['U_input_gradient']
+            , 'U_output_gradient_backward': gradients_backward['U_output_gradient']
+            , 'U_concat_gradient_backward': gradients_backward['U_concat_gradient']
+        }
+        return gradients, (X_error_forward + X_error_backward[:,::-1,:])
+    
+    def update(self
+               , W_forget_gradient_forward, W_input_gradient_forward, W_output_gradient_forward, W_concat_gradient_forward
+               , U_forget_gradient_forward, U_input_gradient_forward, U_output_gradient_forward, U_concat_gradient_forward
+               , W_forget_gradient_backward, W_input_gradient_backward, W_output_gradient_backward, W_concat_gradient_backward
+               , U_forget_gradient_backward, U_input_gradient_backward, U_output_gradient_backward, U_concat_gradient_backward):
+        self.forward_layer.update(
+            W_forget_gradient_forward, W_input_gradient_forward, W_output_gradient_forward, W_concat_gradient_forward
+            , U_forget_gradient_forward, U_input_gradient_forward, U_output_gradient_forward, U_concat_gradient_forward)
+        self.backward_layer.update(
+            W_forget_gradient_backward, W_input_gradient_backward, W_output_gradient_backward, W_concat_gradient_backward
+            , U_forget_gradient_backward, U_input_gradient_backward, U_output_gradient_backward, U_concat_gradient_backward)
 
 
 class EmbeddingLayer:
@@ -283,18 +402,6 @@ class PositionalEmbeddingLayer(EmbeddingLayer):
     
     def update(self, W_gradient):
         self.W += W_gradient
-
-
-class AddLayer:
-    
-    def __init__(self):
-        return
-    
-    def forward(self, X):
-        return np.sum(X, axis=0)
-    
-    def backward(self, X, Y_error):
-        return np.repeat(np.expand_dims(Y_error, axis=0), len(X), axis=0)
 
 
 class MultiHeadAttentionLayer:

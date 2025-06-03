@@ -68,7 +68,7 @@ class LinearRegression:
 
 class RegressionNeuralNetwork:
     
-    GRADIENT_DESCENT_METHODS = ["Regular", "RMSProp", "AdaGrad"]
+    GRADIENT_DESCENT_METHODS = ['Regular', 'RMSProp', 'AdaGrad']
     
     def __init__(
         self, F, D, layer_sizes=[10], add_bias=[True, True], activations=[ReLuActivation, LinearActivation]
@@ -207,8 +207,8 @@ class RegressionNeuralNetwork:
 
 class RegressionRecurrentNeuralNetwork:
     
-    LAYER_TYPES = ['Dense', 'Recurrent', 'LSTM']
-    GRADIENT_DESCENT_METHODS = ["Regular", "RMSProp", "AdaGrad"]
+    LAYER_TYPES = ['Dense', 'Recurrent', 'LSTM', 'BidirectionalRecurrent', 'BidirectionalLSTM']
+    GRADIENT_DESCENT_METHODS = ['Regular', 'RMSProp', 'AdaGrad']
     
     def __init__(
         self, F, D, layer_sizes=[10], add_bias=[True, True], layer_types=['Recurrent', 'Dense'], activations=[ReLuActivation, LinearActivation]
@@ -220,20 +220,25 @@ class RegressionRecurrentNeuralNetwork:
         self.D = D
         
         self.l2 = l2
-        self.dropout_p = dropout_p if isinstance(dropout_p, list) else [dropout_p] * len(layer_sizes)
-        self.batch_normalization = batch_normalization
+        self.dropout_p = dropout_p if isinstance(dropout_p, list) else [dropout_p] * (len(layer_sizes)+1)
+        self.batch_normalization = batch_normalization if isinstance(batch_normalization, list) else [batch_normalization] * len(layer_sizes)
         
         self.layer_sizes = layer_sizes
         self.layers = [
-            RecurrentLayer(f, d, b, dropout_p=p) if t == 'Recurrent' else LSTMLayer(f, d, b, dropout_p=p) if t == 'LSTM' else DenseLayer(f, d, b, dropout_p=p)
+            RecurrentLayer(f, d, b, dropout_p=p) if t == 'Recurrent' else 
+            LSTMLayer(f, d, b, dropout_p=p) if t == 'LSTM' else 
+            BidirectionalRecurrentLayer(f, d, b, dropout_p=p) if t == 'BidirectionalRecurrent' else 
+            BidirectionalLSTMLayer(f, d, b, dropout_p=p) if t == 'BidirectionalLSTM' else 
+            DenseLayer(f, d, b, dropout_p=p)
             for f, d, b, t, p in zip([F]+self.layer_sizes, self.layer_sizes+[D], add_bias, layer_types, [0.0]+self.dropout_p)
         ]
         self.activations = [
             a() for a in activations
         ]
         self.batch_normalization_layers = [
-            BatchNormalization(alpha=batch_normalization_alpha) for i in range(len(self.layers)-1)
-        ] + [None] if self.batch_normalization else [None] * len(self.layers)
+            BatchNormalization(alpha=batch_normalization_alpha) if b else None
+            for b in self.batch_normalization
+        ] + [None]
         self.history = []
         
     def loss(self, X, Y):
