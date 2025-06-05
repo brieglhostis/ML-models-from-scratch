@@ -399,9 +399,6 @@ class PositionalEmbeddingLayer(EmbeddingLayer):
         X = dummy_encode(X, self.F)
         W_gradient = np.sum(np.transpose(X, axes=(1,2,0))@np.transpose(Y_error, axes=(1,0,2)), axis=0) + 2*l2 * self.W / self.F / self.D
         return {'W_gradient': W_gradient * np.sqrt(self.D)}, None
-    
-    def update(self, W_gradient):
-        self.W += W_gradient
 
 
 class MultiHeadAttentionLayer:
