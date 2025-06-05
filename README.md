@@ -6,10 +6,10 @@ This project is a personal challenge to dive deeper into the inner-workings of t
 
 Finalised models
 - **Linear regression** (including Ridge and Lasso regressions)
+- **Regular regression neural network** (dense layers only)
 
 Work in progress
-- **Regular regression neural network** (Dense layers only): ADAM optimizer
-- **Recurrent neural network** (RNN & LSTM): ADAM optimizer, classification
+- **Recurrent neural network** (RNN & LSTM): classification
 - **Transformer**: WIP
 
 Next models
