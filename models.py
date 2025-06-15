@@ -271,7 +271,7 @@ class RegressionDecisionTree:
                 V_right += ((ordered_Y[N-n-1] - M_right - dM_right)**2 - V_right + n * dM_right**2) / (n+1)
                 V[n] += n * V_left / N
                 V[N-n-1] += n * V_right / N
-            n_min = np.argmin(V[self.min_samples_leaf:N-self.min_samples_leaf-1])
+            n_min = self.min_samples_leaf + np.argmin(V[self.min_samples_leaf:N-self.min_samples_leaf-1])
             if V[n_min] < V_min:
                 V_min = V[n_min]
                 split_min = (f, X[:,f][order][n_min])
