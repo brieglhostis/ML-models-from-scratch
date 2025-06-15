@@ -245,25 +245,44 @@ class RegressionDecisionTree:
          - Y (np.ndarray) - target training actuals (NxC)
          - D (int)        - current depth
         """
-        var_min = np.var(Y)
+        V_min = np.var(Y)
+        if V_min == 0.0:
+            return np.mean(Y)
         split_min = None
         N = Y.shape[0]
         for f in range(X.shape[-1]):
-            for x in set(X[:,f]):
-                Y_left = Y[X[:,f] <= x]
-                Y_right = Y[X[:,f] > x]
-                if Y_left.shape[0] < self.min_samples_leaf or Y_right.shape[0] < self.min_samples_leaf:
-                    continue
-                var = (Y_left.shape[0] * np.var(Y_left) + Y_right.shape[0] * np.var(Y_right)) / N
-                if var < var_min:
-                    var_min = var
-                    split_min = (f, x)
+            order = np.argsort(X[:,f])
+            ordered_X = X[order,f]
+            ordered_Y = Y[order]
+            N_left, N_right = 0, 0
+            M_left, M_right = 0.0, 0.0
+            V_left, V_right = 0.0, 0.0
+            V = np.zeros(N)
+            for n in range(1, N):
+                if ordered_X[N-n-1] == ordered_X[N-1]:
+                    V[N-n-1] += V_min
+                else:
+                    break
+            for n in range(N):
+                dM_left, dM_right = (ordered_Y[n] - M_left) / (n+1), (ordered_Y[N-n-1] - M_right) / (n+1)
+                M_left += dM_left
+                M_right += dM_right
+                V_left += ((ordered_Y[n] - M_left - dM_left)**2 - V_left + n * dM_left**2) / (n+1)
+                V_right += ((ordered_Y[N-n-1] - M_right - dM_right)**2 - V_right + n * dM_right**2) / (n+1)
+                V[n] += n * V_left / N
+                V[N-n-1] += n * V_right / N
+            n_min = np.argmin(V[self.min_samples_leaf:N-self.min_samples_leaf-1])
+            if V[n_min] < V_min:
+                V_min = V[n_min]
+                split_min = (f, X[:,f][order][n_min])
         if split_min is None:
             return np.mean(Y)
-        X_left, Y_left = X[X[:,split_min[0]] <= split_min[1]], Y[X[:,split_min[0]] <= split_min[1]]
-        X_right, Y_right = X[X[:,split_min[0]] > split_min[1]], Y[X[:,split_min[0]] > split_min[1]]
+        Y_left = Y[X[:,split_min[0]] <= split_min[1]]
+        Y_right = Y[X[:,split_min[0]] > split_min[1]]
         if D+1 == self.max_depth:
             return [split_min, [np.mean(Y_left), np.mean(Y_right)]]
+        X_left = X[X[:,split_min[0]] <= split_min[1]]
+        X_right = X[X[:,split_min[0]] > split_min[1]]
         return [split_min, [
               self.fit_sub_tree(X_left, Y_left, D+1) if X_left.shape[0] >= self.min_samples_split else int(np.argmax(np.mean(Y_left, axis=0)))
               , self.fit_sub_tree(X_right, Y_right, D+1) if X_right.shape[0] >= self.min_samples_split else int(np.argmax(np.mean(Y_right, axis=0)))]]
