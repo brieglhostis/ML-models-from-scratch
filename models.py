@@ -217,13 +217,17 @@ class RegressionDecisionTree:
         right_indexes = X[:,split[0]] > split[1]
         if np.sum(left_indexes) > 0:
             if isinstance(sub_tree[0], float) or isinstance(sub_tree[0], int):
+                # Set predictions as the leaf value
                 Y_pred[left_indexes] = sub_tree[0]
             else:
+                # Explore subtree to set predictions
                 Y_pred[left_indexes] = self.predict_sub_tree(X[left_indexes], Y_pred[left_indexes], sub_tree[0])
         if np.sum(right_indexes) > 0:
             if isinstance(sub_tree[1], float) or isinstance(sub_tree[1], int):
+                # Set predictions as the leaf value
                 Y_pred[right_indexes] = sub_tree[1]
             else:
+                # Explore subtree to set predictions
                 Y_pred[right_indexes] = self.predict_sub_tree(X[right_indexes], Y_pred[right_indexes], sub_tree[1])
         return Y_pred
 
@@ -247,22 +251,28 @@ class RegressionDecisionTree:
         """
         V_min = np.var(Y)
         if V_min == 0.0:
+            # Only one value in Y, so no need to split further
             return np.mean(Y)
         split_min = None
         N = Y.shape[0]
         for f in range(X.shape[-1]):
+            # Order X_f and Y according to the order of values in X_f
             order = np.argsort(X[:,f])
             ordered_X = X[order,f]
             ordered_Y = Y[order]
+            # Initialize N, M, and V for left and right arrays
             N_left, N_right = 0, 0
             M_left, M_right = 0.0, 0.0
             V_left, V_right = 0.0, 0.0
+            # Initialize the weighted average variance
             V = np.zeros(N)
+            # Penalize equal values at the end of X_f to ensure that some values are kept in the right arrays
             for n in range(1, N):
                 if ordered_X[N-n-1] == ordered_X[N-1]:
                     V[N-n-1] += V_min
                 else:
                     break
+            # Iteratively compute the weighted average variance
             for n in range(N):
                 dM_left, dM_right = (ordered_Y[n] - M_left) / (n+1), (ordered_Y[N-n-1] - M_right) / (n+1)
                 M_left += dM_left
@@ -271,18 +281,22 @@ class RegressionDecisionTree:
                 V_right += ((ordered_Y[N-n-1] - M_right - dM_right)**2 - V_right + n * dM_right**2) / (n+1)
                 V[n] += n * V_left / N
                 V[N-n-1] += n * V_right / N
+            # Find optimal split
             n_min = self.min_samples_leaf + random_argmin(V[self.min_samples_leaf:N-self.min_samples_leaf+1])
             if V[n_min] < V_min:
                 V_min = V[n_min]
                 split_min = (f, X[:,f][order][n_min])
         if split_min is None:
+            # No better split found
             return np.mean(Y)
         Y_left = Y[X[:,split_min[0]] <= split_min[1]]
         Y_right = Y[X[:,split_min[0]] > split_min[1]]
         if D+1 == self.max_depth:
+            # Generate leaves
             return [split_min, [np.mean(Y_left), np.mean(Y_right)]]
         X_left = X[X[:,split_min[0]] <= split_min[1]]
         X_right = X[X[:,split_min[0]] > split_min[1]]
+        # Generate sub tree or leaves depending on number of samples
         return [split_min, [
               self.fit_sub_tree(X_left, Y_left, D+1) if X_left.shape[0] >= self.min_samples_split else np.mean(Y_left)
               , self.fit_sub_tree(X_right, Y_right, D+1) if X_right.shape[0] >= self.min_samples_split else np.mean(Y_right)]]
@@ -352,13 +366,17 @@ class ClassificationDecisionTree:
         right_indexes = X[:,split[0]] > split[1]
         if np.sum(left_indexes) > 0:
             if isinstance(sub_tree[0], int):
+                # Set predictions as the leaf value
                 Y_pred[left_indexes] = dummy_encode(sub_tree[0] * np.ones(np.sum(left_indexes)), self.C)
             else:
+                # Explore subtree to set predictions
                 Y_pred[left_indexes] = self.predict_sub_tree(X[left_indexes], Y_pred[left_indexes], sub_tree[0])
         if np.sum(right_indexes) > 0:
             if isinstance(sub_tree[1], int):
+                # Set predictions as the leaf value
                 Y_pred[right_indexes] = dummy_encode(sub_tree[1] * np.ones(np.sum(right_indexes)), self.C)
             else:
+                # Explore subtree to set predictions
                 Y_pred[right_indexes] = self.predict_sub_tree(X[right_indexes], Y_pred[right_indexes], sub_tree[1])
         return Y_pred
 
@@ -382,39 +400,49 @@ class ClassificationDecisionTree:
         """
         I_min = self.gini_index(Y) if self.information_function == 'gini' else self.self_entropy(Y)
         if I_min <= 0.0:
+            # Only one value in Y, so no need to split further
             return int(random_argmax(np.mean(Y, axis=0)))
         split_min = None
         N = Y.shape[0]
         for f in range(X.shape[-1]):
+            # Order X_f and Y according to the order of values in X_f
             order = np.argsort(X[:,f])
             ordered_X = X[order,f]
             ordered_Y = Y[order]
+            # Compute probability values for left and right arrays
             P_left = np.cumsum(ordered_Y, axis=0) / np.expand_dims(np.arange(1, N+1), axis=-1)
             P_right = np.cumsum(ordered_Y[::-1], axis=0)[::-1] / np.expand_dims(np.arange(N, 0, -1), axis=-1)
+            # Initialize the weighted average information
             I = np.zeros(N)
+            # Penalize equal values at the end of X_f to ensure that some values are kept in the right arrays
             for n in range(1, N):
                 if ordered_X[N-n-1] == ordered_X[N-1]:
                     I[N-n-1] += I_min
                 else:
                     break
+            # Iteratively compute the weighted average information
             if self.information_function == 'gini':
                 I += np.arange(1, N+1) * (1 - np.sum(np.square(P_left), axis=-1)) / N
                 I += np.arange(N, 0, -1) * (1 - np.sum(np.square(P_right), axis=-1)) / N
             else:
                 I -= np.arange(1, N+1) * np.sum(P_left * np.log(P_left + 1e-6), axis=-1) / N
                 I -= np.arange(N, 0, -1) * np.sum(P_right * np.log(P_right + 1e-6), axis=-1) / N
+            # Find optimal split
             n_min = self.min_samples_leaf + random_argmin(I[self.min_samples_leaf:N-self.min_samples_leaf+1])
             if I[n_min] < I_min:
                 I_min = I[n_min]
                 split_min = (f, X[:,f][order][n_min])
         if split_min is None:
+            # No better split found
             return int(random_argmax(np.mean(Y, axis=0)))
         Y_left = Y[X[:,split_min[0]] <= split_min[1]]
         Y_right = Y[X[:,split_min[0]] > split_min[1]]
         if D+1 == self.max_depth:
+            # Generate leaves
             return [split_min, [int(random_argmax(np.mean(Y_left, axis=0))), int(random_argmax(np.mean(Y_right, axis=0)))]]
         X_left = X[X[:,split_min[0]] <= split_min[1]]
         X_right = X[X[:,split_min[0]] > split_min[1]]
+        # Generate sub tree or leaves depending on number of samples
         return [split_min, [
               self.fit_sub_tree(X_left, Y_left, D+1) if X_left.shape[0] >= self.min_samples_split else int(random_argmax(np.mean(Y_left, axis=0)))
               , self.fit_sub_tree(X_right, Y_right, D+1) if X_right.shape[0] >= self.min_samples_split else int(random_argmax(np.mean(Y_right, axis=0)))]]
@@ -476,15 +504,18 @@ class RegressionRandomForest:
         """
         self.D = Y.shape[-1]
         self.F = int(np.sqrt(X.shape[-1])) if self.F is None else self.F
+        # Compute bagging features
         self.feature_masks = [
             np.random.choice(np.arange(X.shape[-1]), self.F, replace=False) 
             if self.F < X.shape[-1] else np.arange(X.shape[-1]) 
             for t in range(self.T)]
+        # Initialize decision trees
         self.trees = [
             RegressionDecisionTree(
                 max_depth=self.max_depth, min_samples_split=self.min_samples_split
                 , min_samples_leaf=self.min_samples_leaf) 
             for t in range(self.T)]
+        # Fit each decision tree using bootstrap on samples
         for t in range(self.T):
             sample_mask = np.random.choice(np.arange(X.shape[0]), X.shape[0], replace=True)
             self.trees[t].fit(X[sample_mask,:][:,self.feature_masks[t]], Y[sample_mask,:])
@@ -541,16 +572,19 @@ class ClassificationRandomForest:
         """
         self.C = Y.shape[-1]
         self.F = int(np.sqrt(X.shape[-1])) if self.F is None else self.F
+        # Compute bagging features
         self.feature_masks = [
             np.random.choice(np.arange(X.shape[-1]), self.F, replace=False) 
             if self.F < X.shape[-1] else np.arange(X.shape[-1]) 
             for t in range(self.T)]
+        # Initialize decision trees
         self.trees = [
             ClassificationDecisionTree(
                 information_function=self.information_function
                 , max_depth=self.max_depth, min_samples_split=self.min_samples_split
                 , min_samples_leaf=self.min_samples_leaf) 
             for t in range(self.T)]
+        # Fit each decision tree using bootstrap on samples
         for t in range(self.T):
             sample_mask = np.random.choice(np.arange(X.shape[0]), X.shape[0], replace=True)
             self.trees[t].fit(X[sample_mask,:][:,self.feature_masks[t]], Y[sample_mask,:])
