@@ -162,11 +162,21 @@ class LogisticRegression:
             metrics = {
                 'train_loss': self.loss(X, Y)
                 , 'train_log_loss': log_loss(Y, Y_pred)
+                , 'train_accuracy': accuracy(Y, Y_pred)
+                , 'train_precision': precision(Y, Y_pred)
+                , 'train_recall': recall(Y, Y_pred)
+                , 'train_f1_score': f1_score(Y, Y_pred)
+                , 'train_auc': auc(Y, Y_pred)
             }
             if X_val is not None and Y_val is not None:
                 Y_pred_val = self.predict(X_val)
                 metrics['val_loss'] = self.loss(X_val, Y_val)
                 metrics['val_log_loss'] = log_loss(Y_val, Y_pred_val)
+                metrics['val_accuracy'] = accuracy(Y_val, Y_pred_val)
+                metrics['val_precision'] = precision(Y_val, Y_pred_val)
+                metrics['val_recall'] = recall(Y_val, Y_pred_val)
+                metrics['val_f1_score'] = f1_score(Y_val, Y_pred_val)
+                metrics['val_auc'] = auc(Y_val, Y_pred_val)
             self.history.append(metrics)
 
             # Verbose
