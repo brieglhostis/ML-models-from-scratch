@@ -7,6 +7,7 @@ from activations import LinearActivation, ReLuActivation, TanHActivation
 from layers import DenseLayer, RecurrentLayer, LSTMLayer
 from normalization import BatchNormalization, RecurrentBatchNormalization
 
+
 class LinearRegression:
     """
     Linear regression model:
@@ -43,7 +44,6 @@ class LinearRegression:
         Compute predictions for a set of input samples 
         Arguments:
          - X (np.ndarray) - input features (NxF)
-         - Y (np.ndarray) - target actuals (NxD)
         """
         if self.W is None:
             raise ValueError('Cannot predict before model is fitted')
@@ -129,7 +129,6 @@ class RegressionNeuralNetwork:
         Compute predictions for a set of input samples 
         Arguments:
          - X (np.ndarray) - input features (NxF)
-         - Y (np.ndarray) - target actuals (NxD)
         """
         return self.forward(X, inference=True)[-1]
     
@@ -207,7 +206,7 @@ class RegressionNeuralNetwork:
                 
                 # Back propagation
                 Y_pred = layer_inputs.pop(-1)
-                layer_error = (Y_batch - Y_pred) / Y.shape[0]
+                layer_error = (Y_pred - Y_batch) / Y_batch.shape[0]
                 layer_gradients = []
                 batch_normalization_gradients = []
                 activation_inputs = layer_inputs[1::3]
@@ -329,7 +328,6 @@ class RegressionRecurrentNeuralNetwork:
         Compute predictions for a set of input samples 
         Arguments:
          - X (np.ndarray) - input features (NxTxF)
-         - Y (np.ndarray) - target actuals (NxTxD)
         """
         return self.forward(X, inference=True)[-1]
     
@@ -407,7 +405,7 @@ class RegressionRecurrentNeuralNetwork:
 
                 # Back propagation
                 Y_pred = layer_inputs.pop(-1)
-                layer_error = (Y_batch - Y_pred) / Y_batch.shape[0] / Y_batch.shape[1]
+                layer_error = (Y_pred - Y_batch) / Y_batch.shape[0] / Y_batch.shape[1]
                 layer_gradients = []
                 batch_normalization_gradients = []
                 activation_inputs = layer_inputs[1::3]

@@ -65,7 +65,7 @@ class DenseLayer:
         return {'W_gradient': W_gradient}, error
     
     def update(self, W_gradient):
-        self.W += W_gradient
+        self.W -= W_gradient
 
 
 class RecurrentLayer:
@@ -117,8 +117,8 @@ class RecurrentLayer:
         return {'W_gradient': W_gradient, 'V_gradient': V_gradient}, X_error
     
     def update(self, W_gradient, V_gradient):
-        self.W += W_gradient
-        self.V += V_gradient
+        self.W -= W_gradient
+        self.V -= V_gradient
 
         
 class LSTMLayer:
@@ -237,14 +237,14 @@ class LSTMLayer:
         return gradients, X_error
     
     def update(self, W_forget_gradient, W_input_gradient, W_output_gradient, W_concat_gradient, U_forget_gradient, U_input_gradient, U_output_gradient, U_concat_gradient):
-        self.W_forget += W_forget_gradient
-        self.W_input += W_input_gradient
-        self.W_output += W_output_gradient
-        self.W_concat += W_concat_gradient
-        self.U_forget += U_forget_gradient
-        self.U_input += U_input_gradient
-        self.U_output += U_output_gradient
-        self.U_concat += U_concat_gradient
+        self.W_forget -= W_forget_gradient
+        self.W_input -= W_input_gradient
+        self.W_output -= W_output_gradient
+        self.W_concat -= W_concat_gradient
+        self.U_forget -= U_forget_gradient
+        self.U_input -= U_input_gradient
+        self.U_output -= U_output_gradient
+        self.U_concat -= U_concat_gradient
 
 
 class BidirectionalRecurrentLayer:
@@ -368,7 +368,7 @@ class EmbeddingLayer:
         return {'W_gradient': W_gradient}, None
     
     def update(self, W_gradient):
-        self.W += W_gradient
+        self.W -= W_gradient
 
 
 class PositionalEmbeddingLayer(EmbeddingLayer):
@@ -495,9 +495,9 @@ class MultiHeadAttentionLayer:
         return {'W_q_gradient': W_q_gradient, 'W_k_gradient': W_k_gradient, 'W_v_gradient': W_v_gradient}, (X_q_error, X_k_error, X_v_error)
     
     def update(self, W_q_gradient, W_k_gradient, W_v_gradient):
-        self.W_q += W_q_gradient
-        self.W_k += W_k_gradient
-        self.W_v += W_v_gradient
+        self.W_q -= W_q_gradient
+        self.W_k -= W_k_gradient
+        self.W_v -= W_v_gradient
 
 
 class BaseAttentionLayer:
