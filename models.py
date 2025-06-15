@@ -67,6 +67,115 @@ class LinearRegression:
         return self.loss(X, Y)
 
 
+class LogisticRegression:
+    """
+    Binary logistic regression model:
+    Y = 1 / (1 + exp(- X W + b))
+    """
+
+    def __init__(self, add_bias=True, l2=0.0):
+        """
+        Arguments:
+         - add_bias (bool) - set to True to add a bias to the equation
+         - l2 (float)      - L2 regularization parameter 
+        """
+        self.add_bias = add_bias
+        self.l2 = l2
+        self.W = None
+
+    def loss(self, X, Y):
+        """
+        Compute the prediction loss, including regularization
+        Arguments:
+         - X (np.ndarray) - input features (NxF)
+         - Y (np.ndarray) - target actuals (NxD)
+        """
+        Y_pred = self.predict(X)
+        return log_loss(Y, Y_pred) + self.l2 * np.mean(np.square(self.W), axis=0)
+
+    def predict(self, X):
+        """
+        Compute target probability predictions for a set of input samples 
+        Arguments:
+         - X (np.ndarray) - input features (NxF)
+        """
+        if self.W is None:
+            raise ValueError('Cannot predict before model is fitted')
+        if self.add_bias and X.shape[-1] == self.W.shape[0]-1:
+            X = np.c_[X, np.ones(X.shape[0])]
+        return sigmoid(X @ self.W)
+
+    def fit(
+        self, X, Y, X_val=None, Y_val=None, learning_rate=0.1, epochs=100, batch_size=1000
+        , optimizer='Adam', gradient_decay=0.9, gradient_norm_decay=0.999, verbose=True):
+        """
+        Fit model using gradient descent to minimize loss
+        Arguments:
+         - X (np.ndarray)              - input training features (NxF)
+         - Y (np.ndarray)              - target training actuals (NxD)
+         - X_val (np.ndarray)          - input validation actuals (N'xF)
+         - Y_val (np.ndarray)          - target validation actuals (N'xD)
+         - learning_rate (float)       - learning rate in gradient descent
+         - epochs (int)                - number of optimization steps
+         - batch_size (int)            - size of batches in batch gradient descent
+         - optimizer (str)             - name of the optimizer to use among 'Regular', 'AdaGrad', 'RMSProp', or 'Adam'
+         - gradient_decay (float)      - exponential gradient decay parameter for RMSProp and Adam
+         - gradient_norm_decay (float) - exponential gradient norm decay parameter for Adam
+         - verbose (float)             - set to True to print intermediary evaluation metrics
+        """
+
+        # Optimizers initialization
+        if optimizer == 'Regular':
+            optimizer = GradientDescentOptimizer()
+        elif optimizer == 'AdaGrad':
+            optimizer = AdaGradOptimizer()
+        elif optimizer == 'RMSProp':
+            optimizer = RMSPropOptimizer(gradient_decay=gradient_decay)
+        elif optimizer == 'Adam':
+            optimizer = AdamOptimizer(gradient_decay=gradient_decay, gradient_norm_decay=gradient_norm_decay)
+        else:
+            raise ValueError(f"Optimizer must be one of 'Regular', 'AdaGrad', 'RMSProp', or 'Adam'")
+
+        if self.add_bias:
+            X = np.c_[X, np.ones(X.shape[0])]
+
+        # Batch creation
+        if batch_size >= X.shape[0]:
+            X_batches = [X]
+            Y_batches = [Y]
+        else:
+            X_batches = [X[i*batch_size:min(X.shape[0],(i+1)*batch_size)] for i in range(X.shape[0] // batch_size)]
+            Y_batches = [Y[i*batch_size:min(X.shape[0],(i+1)*batch_size)] for i in range(X.shape[0] // batch_size)]
+
+        self.W = np.random.normal(loc=0, scale=1/X.shape[-1], size=(X.shape[-1], Y.shape[-1]))
+        self.history = []
+        for e in range(epochs):
+            # Fitting
+            for X_batch, Y_batch in zip(X_batches, Y_batches):
+                Y_pred = sigmoid(X_batch @ self.W)
+                Y_error = (Y_pred - Y_batch) / Y_batch.shape[0]
+                W_gradient = X_batch.T @ (Y_error * Y_pred) + self.l2 * self.W / self.W.shape[0]
+                self.W -= optimizer.update({'W_gradient': W_gradient}, learning_rate=learning_rate)['W_gradient']
+
+            # Evaluation
+            Y_pred = self.predict(X)
+            metrics = {
+                'train_loss': self.loss(X, Y)
+                , 'train_log_loss': log_loss(Y, Y_pred)
+            }
+            if X_val is not None and Y_val is not None:
+                Y_pred_val = self.predict(X_val)
+                metrics['val_loss'] = self.loss(X_val, Y_val)
+                metrics['val_log_loss'] = log_loss(Y_val, Y_pred_val)
+            self.history.append(metrics)
+
+            # Verbose
+            if verbose and (e+1) % 10 == 0:
+                print(f"Epoch {e+1}/{epochs} - train loss = {metrics['train_loss'].mean():.4f}" + (f", validation loss = {metrics['val_loss'].mean():.4f}" if 'val_log_loss' in metrics else ""))
+
+        return self.history
+
+
 class RegressionNeuralNetwork:
     """
     Regression Neural Network model:

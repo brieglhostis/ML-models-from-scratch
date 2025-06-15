@@ -4,7 +4,7 @@ import numpy as np
 
 def mse(Y, Y_pred, axis=0):
     """
-    Compute the mean square error: MSE = sum((Y-Y_pred)**2)
+    Compute the mean square error: MSE = mean((Y-Y_pred)**2)
     Arguments:
      - Y      (np.ndarray)         - target actuals
      - Y_pred (np.ndarray)         - predicted target
@@ -21,6 +21,16 @@ def r_square(Y, Y_pred, axis=0):
      - axis (Any[int, tuple(int)]) - axis along which to sum
     """
     return 1 - np.sum(np.square(Y-Y_pred), axis=axis) / np.sum(np.square(Y-np.mean(Y, axis=axis)), axis=axis)
+
+def log_loss(Y, Y_pred, axis=0):
+    """
+    Compute the log loss: log loss = - mean(Y * log(Y_pred) + (1-Y) * log(1-Y_pred))
+    Arguments:
+     - Y      (np.ndarray)         - binary target actuals
+     - Y_pred (np.ndarray)         - predicted target probability
+     - axis (Any[int, tuple(int)]) - axis along which to average out
+    """
+    return - np.mean(Y * np.log(Y_pred) + (1 - Y) * np.log(1 - Y_pred), axis=axis)
 
 def sigmoid(x, safety_threshold=200):
     """
