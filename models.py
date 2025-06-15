@@ -1,7 +1,7 @@
 
 import numpy as np
 
-from utils import mse, r_square
+from utils import sigmoid, mse, r_square, log_loss, accuracy, precision, recall, f1_score, auc
 from optimizers import GradientDescentOptimizer, AdaGradOptimizer, RMSPropOptimizer, AdamOptimizer
 from activations import LinearActivation, ReLuActivation, TanHActivation
 from layers import DenseLayer, RecurrentLayer, LSTMLayer
