@@ -186,6 +186,97 @@ class LogisticRegression:
         return self.history
 
 
+class RegressionDecisionTree:
+    """
+    Regression decision tree
+    """
+
+    def __init__(self, max_depth=None, min_samples_split=2, min_samples_leaf=1):
+        """
+        Arguments:
+         - max_depth (int)            - maximum dept of tree
+         - min_samples_split (int)    - minimum number of samples to allow a split
+         - min_samples_leaf (int)     - minimum number of samples in every leaf
+        """
+        self.D = None
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_samples_leaf = min_samples_leaf
+        self.tree = None
+
+    def predict_sub_tree(self, X, Y_pred, tree):
+        """
+        Recursively compute predictions for a set of input samples 
+        Arguments:
+         - X (np.ndarray) - input features (NxF)
+         - Y (np.ndarray) - prediction array to fill (NxD)
+         - tree           - sub tree to use for prediction
+        """
+        split, sub_tree = tree
+        left_indexes = X[:,split[0]] <= split[1]
+        right_indexes = X[:,split[0]] > split[1]
+        if isinstance(sub_tree[0], float):
+            Y_pred[left_indexes] = sub_tree[0]
+        else:
+            Y_pred[left_indexes] = self.predict_sub_tree(X[left_indexes], Y_pred[left_indexes], sub_tree[0])
+        if isinstance(sub_tree[1], float):
+            Y_pred[right_indexes] = sub_tree[1]
+        else:
+            Y_pred[right_indexes] = self.predict_sub_tree(X[right_indexes], Y_pred[right_indexes], sub_tree[1])
+        return Y_pred
+
+    def predict(self, X):
+        """
+        Compute predictions for a set of input samples 
+        Arguments:
+         - X (np.ndarray) - input features (NxF)
+        """
+        if self.tree is None:
+            raise ValueError('Cannot predict before model is fitted')
+        return np.array([self.predict_sub_tree(X, np.zeros(X.shape[0]), self.tree[d]) for d in range(self.D)]).T
+
+    def fit_sub_tree(self, X, Y, D=0):
+        """
+        Recursively fit model by minimizing variance within each sub tree
+        Arguments:
+         - X (np.ndarray) - input training features (NxF)
+         - Y (np.ndarray) - target training actuals (NxC)
+         - D (int)        - current depth
+        """
+        var_min = np.var(Y)
+        split_min = None
+        N = Y.shape[0]
+        for f in range(X.shape[-1]):
+            X_f = np.sort(X[:,f])
+            for x in X_f[self.min_samples_leaf:-self.min_samples_leaf]:
+                Y_left = Y[X[:,f] <= x]
+                Y_right = Y[X[:,f] > x]
+                var = (Y_left.shape[0] * np.var(Y_left) + Y_right.shape[0] * np.var(Y_right)) / N
+                if var < var_min:
+                    var_min = var
+                    split_min = (f, x)
+        if split_min is None:
+            return int(np.argmax(np.mean(Y, axis=0)))
+        X_left, Y_left = X[X[:,split_min[0]] <= split_min[1]], Y[X[:,split_min[0]] <= split_min[1]]
+        X_right, Y_right = X[X[:,split_min[0]] > split_min[1]], Y[X[:,split_min[0]] > split_min[1]]
+        if D+1 == self.max_depth:
+            return [split_min, [np.mean(Y_left), np.mean(Y_right)]]
+        return [split_min, [
+              self.fit_sub_tree(X_left, Y_left, D+1) if X_left.shape[0] >= self.min_samples_split else int(np.argmax(np.mean(Y_left, axis=0)))
+              , self.fit_sub_tree(X_right, Y_right, D+1) if X_right.shape[0] >= self.min_samples_split else int(np.argmax(np.mean(Y_right, axis=0)))]]
+
+    def fit(self, X, Y):
+        """
+        Fit model by minimizing variance within each sub tree
+        Arguments:
+         - X (np.ndarray) - input training features (NxF)
+         - Y (np.ndarray) - target training actuals (NxD)
+        """
+        self.D = Y.shape[-1]
+        self.tree = [self.fit_sub_tree(X, Y[:,d]) for d in range(self.D)]
+        return self.tree
+
+
 class ClassificationDecisionTree:
     """
     Classification decision tree
@@ -259,7 +350,7 @@ class ClassificationDecisionTree:
 
     def fit_sub_tree(self, X, Y, D=0):
         """
-        Recursively fit model by maximizing information for each sub tree
+        Recursively fit model by minimizing information function within each sub tree
         Arguments:
          - X (np.ndarray) - input training features (NxF)
          - Y (np.ndarray) - target training actuals (NxC)
@@ -289,10 +380,10 @@ class ClassificationDecisionTree:
 
     def fit(self, X, Y):
         """
-        Fit model by maximizing information for each sub tree
+        Fit model by minimizing information function within each sub tree
         Arguments:
          - X (np.ndarray) - input training features (NxF)
-         - Y (np.ndarray) - target training actuals (NxD)
+         - Y (np.ndarray) - target training actuals (NxC)
         """
         self.C = Y.shape[-1]
         self.tree = self.fit_sub_tree(X, Y)
