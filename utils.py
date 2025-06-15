@@ -161,3 +161,37 @@ def one_hot_encode(X, F=None):
         F = np.max(X) if F is None else F
         return np.array([np.where(np.arange(1, F) == x, 1, 0) for x in X])
     return np.array([one_hot_encode(x, F) for x in X])
+
+def random_argmin(A, axis=0):
+    """
+    Compute the argmin for a 1-D or 2-D array
+    Arguments:
+     - A (np.ndarray) - input array
+     - axis (int)     - axis along with to find min in case of 2-D array
+    """
+    if len(A.shape) > 2:
+        raise ValueError(f"Random argmin is not supported to arrays with more than 2 axes")
+    if len(A.shape) == 1:
+        p = np.where(A == np.min(A), 1, 0)
+        return np.random.choice(np.arange(len(A)), p=p/np.sum(p))
+    elif axis == 0:
+        return np.array([random_argmin(a) for a in A.T]).T
+    else:
+        return np.array([random_argmin(a) for a in A])
+
+def random_argmax(A, axis=0):
+    """
+    Compute the argmax for a 1-D or 2-D array
+    Arguments:
+     - A (np.ndarray) - input array
+     - axis (int)     - axis along with to find max in case of 2-D array
+    """
+    if len(A.shape) > 2:
+        raise ValueError(f"Random argmax is not supported to arrays with more than 2 axes")
+    if len(A.shape) == 1:
+        p = np.where(A == np.max(A), 1, 0)
+        return np.random.choice(np.arange(len(A)), p=p/np.sum(p))
+    elif axis == 0:
+        return np.array([random_argmax(a) for a in A.T]).T
+    else:
+        return np.array([random_argmax(a) for a in A])

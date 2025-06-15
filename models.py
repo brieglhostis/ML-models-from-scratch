@@ -1,7 +1,7 @@
 
 import numpy as np
 
-from utils import sigmoid, mse, r_square, log_loss, accuracy, precision, recall, f1_score, auc, dummy_encode
+from utils import sigmoid, mse, r_square, log_loss, accuracy, precision, recall, f1_score, auc, dummy_encode, random_argmin, random_argmax
 from optimizers import GradientDescentOptimizer, AdaGradOptimizer, RMSPropOptimizer, AdamOptimizer
 from activations import LinearActivation, ReLuActivation, TanHActivation
 from layers import DenseLayer, RecurrentLayer, LSTMLayer
@@ -200,7 +200,7 @@ class RegressionDecisionTree:
         """
         self.D = None
         self.max_depth = max_depth
-        self.min_samples_split = min_samples_split
+        self.min_samples_split = max(min_samples_split, 2*min_samples_leaf)
         self.min_samples_leaf = min_samples_leaf
         self.tree = None
 
@@ -271,7 +271,7 @@ class RegressionDecisionTree:
                 V_right += ((ordered_Y[N-n-1] - M_right - dM_right)**2 - V_right + n * dM_right**2) / (n+1)
                 V[n] += n * V_left / N
                 V[N-n-1] += n * V_right / N
-            n_min = self.min_samples_leaf + np.argmin(V[self.min_samples_leaf:N-self.min_samples_leaf-1])
+            n_min = self.min_samples_leaf + random_argmin(V[self.min_samples_leaf:N-self.min_samples_leaf+1])
             if V[n_min] < V_min:
                 V_min = V[n_min]
                 split_min = (f, X[:,f][order][n_min])
@@ -284,8 +284,8 @@ class RegressionDecisionTree:
         X_left = X[X[:,split_min[0]] <= split_min[1]]
         X_right = X[X[:,split_min[0]] > split_min[1]]
         return [split_min, [
-              self.fit_sub_tree(X_left, Y_left, D+1) if X_left.shape[0] >= self.min_samples_split else int(np.argmax(np.mean(Y_left, axis=0)))
-              , self.fit_sub_tree(X_right, Y_right, D+1) if X_right.shape[0] >= self.min_samples_split else int(np.argmax(np.mean(Y_right, axis=0)))]]
+              self.fit_sub_tree(X_left, Y_left, D+1) if X_left.shape[0] >= self.min_samples_split else np.mean(Y_left)
+              , self.fit_sub_tree(X_right, Y_right, D+1) if X_right.shape[0] >= self.min_samples_split else np.mean(Y_right)]]
 
     def fit(self, X, Y):
         """
@@ -315,10 +315,10 @@ class ClassificationDecisionTree:
          - min_samples_leaf (int)     - minimum number of samples in every leaf
         """
         assert information_function in self.INFORMATION_FUNCTIONS
-        self.information_function = self.gini_index if information_function == 'gini' else self.self_entropy
+        self.information_function = information_function
         self.C = None
         self.max_depth = max_depth
-        self.min_samples_split = min_samples_split
+        self.min_samples_split = max(min_samples_split, 2*min_samples_leaf)
         self.min_samples_leaf = min_samples_leaf
         self.tree = None
 
@@ -380,28 +380,44 @@ class ClassificationDecisionTree:
          - Y (np.ndarray) - target training actuals (NxC)
          - D (int)        - current depth
         """
-        G_min = self.information_function(Y)
+        I_min = self.gini_index(Y) if self.information_function == 'gini' else self.self_entropy(Y)
+        if I_min <= 0.0:
+            return int(random_argmax(np.mean(Y, axis=0)))
         split_min = None
         N = Y.shape[0]
         for f in range(X.shape[-1]):
-            for x in set(X[:,f]):
-                Y_left = Y[X[:,f] <= x]
-                Y_right = Y[X[:,f] > x]
-                if Y_left.shape[0] < self.min_samples_leaf or Y_right.shape[0] < self.min_samples_leaf:
-                    continue
-                G = (Y_left.shape[0] * self.information_function(Y_left) + Y_right.shape[0] * self.information_function(Y_right)) / N
-                if G < G_min:
-                    G_min = G
-                    split_min = (f, x)
+            order = np.argsort(X[:,f])
+            ordered_X = X[order,f]
+            ordered_Y = Y[order]
+            P_left = np.cumsum(ordered_Y, axis=0) / np.expand_dims(np.arange(1, N+1), axis=-1)
+            P_right = np.cumsum(ordered_Y[::-1], axis=0)[::-1] / np.expand_dims(np.arange(N, 0, -1), axis=-1)
+            I = np.zeros(N)
+            for n in range(1, N):
+                if ordered_X[N-n-1] == ordered_X[N-1]:
+                    I[N-n-1] += I_min
+                else:
+                    break
+            if self.information_function == 'gini':
+                I += np.arange(1, N+1) * (1 - np.sum(np.square(P_left), axis=-1)) / N
+                I += np.arange(N, 0, -1) * (1 - np.sum(np.square(P_right), axis=-1)) / N
+            else:
+                I -= np.arange(1, N+1) * np.sum(P_left * np.log(P_left + 1e-6), axis=-1) / N
+                I -= np.arange(N, 0, -1) * np.sum(P_right * np.log(P_right + 1e-6), axis=-1) / N
+            n_min = self.min_samples_leaf + random_argmin(I[self.min_samples_leaf:N-self.min_samples_leaf+1])
+            if I[n_min] < I_min:
+                I_min = I[n_min]
+                split_min = (f, X[:,f][order][n_min])
         if split_min is None:
-            return int(np.argmax(np.mean(Y, axis=0)))
-        X_left, Y_left = X[X[:,split_min[0]] <= split_min[1]], Y[X[:,split_min[0]] <= split_min[1]]
-        X_right, Y_right = X[X[:,split_min[0]] > split_min[1]], Y[X[:,split_min[0]] > split_min[1]]
+            return int(random_argmax(np.mean(Y, axis=0)))
+        Y_left = Y[X[:,split_min[0]] <= split_min[1]]
+        Y_right = Y[X[:,split_min[0]] > split_min[1]]
         if D+1 == self.max_depth:
-            return [split_min, [int(np.argmax(np.mean(Y_left, axis=0))), int(np.argmax(np.mean(Y_right, axis=0)))]]
+            return [split_min, [int(random_argmax(np.mean(Y_left, axis=0))), int(random_argmax(np.mean(Y_right, axis=0)))]]
+        X_left = X[X[:,split_min[0]] <= split_min[1]]
+        X_right = X[X[:,split_min[0]] > split_min[1]]
         return [split_min, [
-              self.fit_sub_tree(X_left, Y_left, D+1) if X_left.shape[0] >= self.min_samples_split else int(np.argmax(np.mean(Y_left, axis=0)))
-              , self.fit_sub_tree(X_right, Y_right, D+1) if X_right.shape[0] >= self.min_samples_split else int(np.argmax(np.mean(Y_right, axis=0)))]]
+              self.fit_sub_tree(X_left, Y_left, D+1) if X_left.shape[0] >= self.min_samples_split else int(random_argmax(np.mean(Y_left, axis=0)))
+              , self.fit_sub_tree(X_right, Y_right, D+1) if X_right.shape[0] >= self.min_samples_split else int(random_argmax(np.mean(Y_right, axis=0)))]]
 
     def fit(self, X, Y):
         """
@@ -483,7 +499,7 @@ class ClassificationRandomForest:
     INFORMATION_FUNCTIONS = ['gini', 'entropy']
 
     def __init__(self, T=10, F=None, information_function='gini', max_depth=None, min_samples_split=2, min_samples_leaf=1):
-        """
+        """g
         Arguments:
          - T (int)                    - number of trees
          - F (int)                    - number of features per tree, if None then uses the square root of the total number of features
@@ -511,7 +527,7 @@ class ClassificationRandomForest:
         """
         if self.feature_masks is None or self.trees is None:
             raise ValueError('Cannot predict before model is fitted')
-        return dummy_encode(np.argmax(np.mean(np.array([
+        return dummy_encode(random_argmax(np.mean(np.array([
             tree.predict(X[:,feature_mask]) 
             for feature_mask, tree, in zip(self.feature_masks, self.trees)
         ]), axis=0), axis=-1), self.C)
