@@ -216,12 +216,12 @@ class RegressionDecisionTree:
         left_indexes = X[:,split[0]] <= split[1]
         right_indexes = X[:,split[0]] > split[1]
         if np.sum(left_indexes) > 0:
-            if isinstance(sub_tree[0], float):
+            if isinstance(sub_tree[0], float) or isinstance(sub_tree[0], int):
                 Y_pred[left_indexes] = sub_tree[0]
             else:
                 Y_pred[left_indexes] = self.predict_sub_tree(X[left_indexes], Y_pred[left_indexes], sub_tree[0])
         if np.sum(right_indexes) > 0:
-            if isinstance(sub_tree[1], float):
+            if isinstance(sub_tree[1], float) or isinstance(sub_tree[1], int):
                 Y_pred[right_indexes] = sub_tree[1]
             else:
                 Y_pred[right_indexes] = self.predict_sub_tree(X[right_indexes], Y_pred[right_indexes], sub_tree[1])
@@ -259,7 +259,7 @@ class RegressionDecisionTree:
                     var_min = var
                     split_min = (f, x)
         if split_min is None:
-            return int(np.argmax(np.mean(Y, axis=0)))
+            return np.mean(Y)
         X_left, Y_left = X[X[:,split_min[0]] <= split_min[1]], Y[X[:,split_min[0]] <= split_min[1]]
         X_right, Y_right = X[X[:,split_min[0]] > split_min[1]], Y[X[:,split_min[0]] > split_min[1]]
         if D+1 == self.max_depth:
