@@ -8,6 +8,7 @@ Finalised models
 - **Linear regression** (including Ridge and Lasso regressions)
 - **Logistic regression** (binary classification only)
 - **Decision trees** (regression and classification)
+- **Random forest** (regression and classification)
 - **Regular regression neural network** (dense layers only)
 - **Recurrent neural network** (RNN & LSTM, regression only)
 
@@ -16,7 +17,6 @@ Work in progress
 - **Transformer**: WIP
 
 Next models
-- **Random forest**
 - **SVM** 
 - **Boosting methods**
 - **Convolutional neural network**

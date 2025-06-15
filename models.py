@@ -1,11 +1,11 @@
 
 import numpy as np
 
-from utils import sigmoid, mse, r_square, log_loss, accuracy, precision, recall, f1_score, auc
+from utils import sigmoid, mse, r_square, log_loss, accuracy, precision, recall, f1_score, auc, dummy_encode
 from optimizers import GradientDescentOptimizer, AdaGradOptimizer, RMSPropOptimizer, AdamOptimizer
 from activations import LinearActivation, ReLuActivation, TanHActivation
 from layers import DenseLayer, RecurrentLayer, LSTMLayer
-from normalization import BatchNormalization, RecurrentBatchNormalization
+from normalization import BatchNormalization
 
 
 class LinearRegression:
@@ -194,9 +194,9 @@ class RegressionDecisionTree:
     def __init__(self, max_depth=None, min_samples_split=2, min_samples_leaf=1):
         """
         Arguments:
-         - max_depth (int)            - maximum dept of tree
-         - min_samples_split (int)    - minimum number of samples to allow a split
-         - min_samples_leaf (int)     - minimum number of samples in every leaf
+         - max_depth (int)         - maximum dept of tree
+         - min_samples_split (int) - minimum number of samples to allow a split
+         - min_samples_leaf (int)  - minimum number of samples in every leaf
         """
         self.D = None
         self.max_depth = max_depth
@@ -215,14 +215,16 @@ class RegressionDecisionTree:
         split, sub_tree = tree
         left_indexes = X[:,split[0]] <= split[1]
         right_indexes = X[:,split[0]] > split[1]
-        if isinstance(sub_tree[0], float):
-            Y_pred[left_indexes] = sub_tree[0]
-        else:
-            Y_pred[left_indexes] = self.predict_sub_tree(X[left_indexes], Y_pred[left_indexes], sub_tree[0])
-        if isinstance(sub_tree[1], float):
-            Y_pred[right_indexes] = sub_tree[1]
-        else:
-            Y_pred[right_indexes] = self.predict_sub_tree(X[right_indexes], Y_pred[right_indexes], sub_tree[1])
+        if np.sum(left_indexes) > 0:
+            if isinstance(sub_tree[0], float):
+                Y_pred[left_indexes] = sub_tree[0]
+            else:
+                Y_pred[left_indexes] = self.predict_sub_tree(X[left_indexes], Y_pred[left_indexes], sub_tree[0])
+        if np.sum(right_indexes) > 0:
+            if isinstance(sub_tree[1], float):
+                Y_pred[right_indexes] = sub_tree[1]
+            else:
+                Y_pred[right_indexes] = self.predict_sub_tree(X[right_indexes], Y_pred[right_indexes], sub_tree[1])
         return Y_pred
 
     def predict(self, X):
@@ -247,10 +249,11 @@ class RegressionDecisionTree:
         split_min = None
         N = Y.shape[0]
         for f in range(X.shape[-1]):
-            X_f = np.sort(X[:,f])
-            for x in X_f[self.min_samples_leaf:-self.min_samples_leaf]:
+            for x in set(X[:,f]):
                 Y_left = Y[X[:,f] <= x]
                 Y_right = Y[X[:,f] > x]
+                if Y_left.shape[0] < self.min_samples_leaf or Y_right.shape[0] < self.min_samples_leaf:
+                    continue
                 var = (Y_left.shape[0] * np.var(Y_left) + Y_right.shape[0] * np.var(Y_right)) / N
                 if var < var_min:
                     var_min = var
@@ -328,14 +331,16 @@ class ClassificationDecisionTree:
         split, sub_tree = tree
         left_indexes = X[:,split[0]] <= split[1]
         right_indexes = X[:,split[0]] > split[1]
-        if isinstance(sub_tree[0], int):
-            Y_pred[left_indexes] = np.repeat(np.array([[1 if i == sub_tree[0] else 0 for i in range(self.C)]]), np.sum(left_indexes), axis=0)
-        else:
-            Y_pred[left_indexes] = self.predict_sub_tree(X[left_indexes], Y_pred[left_indexes], sub_tree[0])
-        if isinstance(sub_tree[1], int):
-            Y_pred[right_indexes] = np.repeat(np.array([[1 if i == sub_tree[1] else 0 for i in range(self.C)]]), np.sum(right_indexes), axis=0)
-        else:
-            Y_pred[right_indexes] = self.predict_sub_tree(X[right_indexes], Y_pred[right_indexes], sub_tree[1])
+        if np.sum(left_indexes) > 0:
+            if isinstance(sub_tree[0], int):
+                Y_pred[left_indexes] = dummy_encode(sub_tree[0] * np.ones(np.sum(left_indexes)), self.C)
+            else:
+                Y_pred[left_indexes] = self.predict_sub_tree(X[left_indexes], Y_pred[left_indexes], sub_tree[0])
+        if np.sum(right_indexes) > 0:
+            if isinstance(sub_tree[1], int):
+                Y_pred[right_indexes] = dummy_encode(sub_tree[1] * np.ones(np.sum(right_indexes)), self.C)
+            else:
+                Y_pred[right_indexes] = self.predict_sub_tree(X[right_indexes], Y_pred[right_indexes], sub_tree[1])
         return Y_pred
 
     def predict(self, X):
@@ -360,10 +365,11 @@ class ClassificationDecisionTree:
         split_min = None
         N = Y.shape[0]
         for f in range(X.shape[-1]):
-            X_f = np.sort(X[:,f])
-            for x in X_f[self.min_samples_leaf:-self.min_samples_leaf]:
+            for x in set(X[:,f]):
                 Y_left = Y[X[:,f] <= x]
                 Y_right = Y[X[:,f] > x]
+                if Y_left.shape[0] < self.min_samples_leaf or Y_right.shape[0] < self.min_samples_leaf:
+                    continue
                 G = (Y_left.shape[0] * self.information_function(Y_left) + Y_right.shape[0] * self.information_function(Y_right)) / N
                 if G < G_min:
                     G_min = G
@@ -388,6 +394,132 @@ class ClassificationDecisionTree:
         self.C = Y.shape[-1]
         self.tree = self.fit_sub_tree(X, Y)
         return self.tree
+
+
+class RegressionRandomForest:
+    """
+    Regression random forest
+    """
+
+    def __init__(self, T=10, F=None, max_depth=None, min_samples_split=2, min_samples_leaf=1):
+        """
+        Arguments:
+         - T (int)                 - number of trees
+         - F (int)                 - number of features per tree, if None then uses the square root of the total number of features
+         - max_depth (int)         - maximum dept of tree
+         - min_samples_split (int) - minimum number of samples to allow a split
+         - min_samples_leaf (int)  - minimum number of samples in every leaf
+        """
+        self.D = None
+        self.T = T
+        self.F = F
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_samples_leaf = min_samples_leaf
+        self.feature_masks = None
+        self.trees = None
+        
+    def predict(self, X):
+        """
+        Compute predictions for a set of input samples by averaging the predictions from all trees
+        Arguments:
+         - X (np.ndarray) - input features (NxF)
+        """
+        if self.feature_masks is None or self.trees is None:
+            raise ValueError('Cannot predict before model is fitted')
+        return np.mean(np.array([
+            tree.predict(X[:,feature_mask]) 
+            for feature_mask, tree, in zip(self.feature_masks, self.trees)
+        ]), axis=0)
+    
+    def fit(self, X, Y):
+        """
+        Fit decision trees using sample and feature bagging
+        Arguments:
+         - X (np.ndarray) - input training features (NxF)
+         - Y (np.ndarray) - target training actuals (NxD)
+        """
+        self.D = Y.shape[-1]
+        self.F = int(np.sqrt(X.shape[-1])) if self.F is None else self.F
+        self.feature_masks = [
+            np.random.choice(np.arange(X.shape[-1]), self.F, replace=False) 
+            if self.F < X.shape[-1] else np.arange(X.shape[-1]) 
+            for t in range(self.T)]
+        self.trees = [
+            RegressionDecisionTree(
+                max_depth=self.max_depth, min_samples_split=self.min_samples_split
+                , min_samples_leaf=self.min_samples_leaf) 
+            for t in range(self.T)]
+        for t in range(self.T):
+            sample_mask = np.random.choice(np.arange(X.shape[0]), X.shape[0], replace=True)
+            self.trees[t].fit(X[sample_mask,:][:,self.feature_masks[t]], Y[sample_mask,:])
+        return self.trees
+
+
+class ClassificationRandomForest:
+    """
+    Classification random forest
+    """
+
+    INFORMATION_FUNCTIONS = ['gini', 'entropy']
+
+    def __init__(self, T=10, F=None, information_function='gini', max_depth=None, min_samples_split=2, min_samples_leaf=1):
+        """
+        Arguments:
+         - T (int)                    - number of trees
+         - F (int)                    - number of features per tree, if None then uses the square root of the total number of features
+         - information_function (str) - information function name, either 'gini' or 'entropy'
+         - max_depth (int)            - maximum dept of tree
+         - min_samples_split (int)    - minimum number of samples to allow a split
+         - min_samples_leaf (int)     - minimum number of samples in every leaf
+        """
+        assert information_function in self.INFORMATION_FUNCTIONS
+        self.C = None
+        self.T = T
+        self.F = F
+        self.information_function = information_function
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_samples_leaf = min_samples_leaf
+        self.feature_masks = None
+        self.trees = None
+        
+    def predict(self, X):
+        """
+        Compute predictions for a set of input samples by finding the most common prediction
+        Arguments:
+         - X (np.ndarray) - input features (NxF)
+        """
+        if self.feature_masks is None or self.trees is None:
+            raise ValueError('Cannot predict before model is fitted')
+        return dummy_encode(np.argmax(np.mean(np.array([
+            tree.predict(X[:,feature_mask]) 
+            for feature_mask, tree, in zip(self.feature_masks, self.trees)
+        ]), axis=0), axis=-1), self.C)
+    
+    def fit(self, X, Y):
+        """
+        Fit decision trees using sample and feature bagging
+        Arguments:
+         - X (np.ndarray) - input training features (NxF)
+         - Y (np.ndarray) - target training actuals (NxC)
+        """
+        self.C = Y.shape[-1]
+        self.F = int(np.sqrt(X.shape[-1])) if self.F is None else self.F
+        self.feature_masks = [
+            np.random.choice(np.arange(X.shape[-1]), self.F, replace=False) 
+            if self.F < X.shape[-1] else np.arange(X.shape[-1]) 
+            for t in range(self.T)]
+        self.trees = [
+            ClassificationDecisionTree(
+                information_function=self.information_function
+                , max_depth=self.max_depth, min_samples_split=self.min_samples_split
+                , min_samples_leaf=self.min_samples_leaf) 
+            for t in range(self.T)]
+        for t in range(self.T):
+            sample_mask = np.random.choice(np.arange(X.shape[0]), X.shape[0], replace=True)
+            self.trees[t].fit(X[sample_mask,:][:,self.feature_masks[t]], Y[sample_mask,:])
+        return self.trees
 
 
 class RegressionNeuralNetwork:
