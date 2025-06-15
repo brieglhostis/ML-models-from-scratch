@@ -186,6 +186,119 @@ class LogisticRegression:
         return self.history
 
 
+class ClassificationDecisionTree:
+    """
+    Classification decision tree
+    """
+
+    INFORMATION_FUNCTIONS = ['gini', 'entropy']
+
+    def __init__(self, information_function='gini', max_depth=None, min_samples_split=2, min_samples_leaf=1):
+        """
+        Arguments:
+         - information_function (str) - information function name, either 'gini' or 'entropy'
+         - max_depth (int)            - maximum dept of tree
+         - min_samples_split (int)    - minimum number of samples to allow a split
+         - min_samples_leaf (int)     - minimum number of samples in every leaf
+        """
+        assert information_function in self.INFORMATION_FUNCTIONS
+        self.information_function = self.gini_index if information_function == 'gini' else self.self_entropy
+        self.C = None
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_samples_leaf = min_samples_leaf
+        self.tree = None
+
+    def gini_index(self, Y):
+        """
+        Compute the Gini index: G = 1 - sum(P_c²)
+        Arguments:
+         - Y (np.ndarray) - target actuals (NxC)
+        """
+        return 1 - np.sum(np.square(np.mean(Y, axis=0)), axis=0)
+
+    def self_entropy(self, Y, axis=0):
+        """
+        Compute the self entropy: entropy = - sum(P_c * log(P_c))
+        Arguments:
+         - Y (np.ndarray) - target actuals (NxC)
+        """
+        P = np.mean(Y, axis=0)
+        return - np.sum(P*np.log(P+1e-6), axis=0)
+
+    def predict_sub_tree(self, X, Y_pred, tree):
+        """
+        Recursively compute predictions for a set of input samples 
+        Arguments:
+         - X (np.ndarray) - input features (NxF)
+         - Y (np.ndarray) - prediction array to fill (NxC)
+         - tree           - sub tree to use for prediction
+        """
+        split, sub_tree = tree
+        left_indexes = X[:,split[0]] <= split[1]
+        right_indexes = X[:,split[0]] > split[1]
+        if isinstance(sub_tree[0], int):
+            Y_pred[left_indexes] = np.repeat(np.array([[1 if i == sub_tree[0] else 0 for i in range(self.C)]]), np.sum(left_indexes), axis=0)
+        else:
+            Y_pred[left_indexes] = self.predict_sub_tree(X[left_indexes], Y_pred[left_indexes], sub_tree[0])
+        if isinstance(sub_tree[1], int):
+            Y_pred[right_indexes] = np.repeat(np.array([[1 if i == sub_tree[1] else 0 for i in range(self.C)]]), np.sum(right_indexes), axis=0)
+        else:
+            Y_pred[right_indexes] = self.predict_sub_tree(X[right_indexes], Y_pred[right_indexes], sub_tree[1])
+        return Y_pred
+
+    def predict(self, X):
+        """
+        Compute predictions for a set of input samples 
+        Arguments:
+         - X (np.ndarray) - input features (NxF)
+        """
+        if self.tree is None:
+            raise ValueError('Cannot predict before model is fitted')
+        return self.predict_sub_tree(X, np.zeros((X.shape[0], self.C)), self.tree)
+
+    def fit_sub_tree(self, X, Y, D=0):
+        """
+        Recursively fit model by maximizing information for each sub tree
+        Arguments:
+         - X (np.ndarray) - input training features (NxF)
+         - Y (np.ndarray) - target training actuals (NxC)
+         - D (int)        - current depth
+        """
+        G_min = self.information_function(Y)
+        split_min = None
+        N = Y.shape[0]
+        for f in range(X.shape[-1]):
+            X_f = np.sort(X[:,f])
+            for x in X_f[self.min_samples_leaf:-self.min_samples_leaf]:
+                Y_left = Y[X[:,f] <= x]
+                Y_right = Y[X[:,f] > x]
+                G = (Y_left.shape[0] * self.information_function(Y_left) + Y_right.shape[0] * self.information_function(Y_right)) / N
+                if G < G_min:
+                    G_min = G
+                    split_min = (f, x)
+        if split_min is None:
+            return int(np.argmax(np.mean(Y, axis=0)))
+        X_left, Y_left = X[X[:,split_min[0]] <= split_min[1]], Y[X[:,split_min[0]] <= split_min[1]]
+        X_right, Y_right = X[X[:,split_min[0]] > split_min[1]], Y[X[:,split_min[0]] > split_min[1]]
+        if D+1 == self.max_depth:
+            return [split_min, [int(np.argmax(np.mean(Y_left, axis=0))), int(np.argmax(np.mean(Y_right, axis=0)))]]
+        return [split_min, [
+              self.fit_sub_tree(X_left, Y_left, D+1) if X_left.shape[0] >= self.min_samples_split else int(np.argmax(np.mean(Y_left, axis=0)))
+              , self.fit_sub_tree(X_right, Y_right, D+1) if X_right.shape[0] >= self.min_samples_split else int(np.argmax(np.mean(Y_right, axis=0)))]]
+
+    def fit(self, X, Y):
+        """
+        Fit model by maximizing information for each sub tree
+        Arguments:
+         - X (np.ndarray) - input training features (NxF)
+         - Y (np.ndarray) - target training actuals (NxD)
+        """
+        self.C = Y.shape[-1]
+        self.tree = self.fit_sub_tree(X, Y)
+        return self.tree
+
+
 class RegressionNeuralNetwork:
     """
     Regression Neural Network model:
