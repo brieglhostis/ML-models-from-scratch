@@ -13,10 +13,10 @@ Finalised models
 - **Recurrent neural network** (RNN & LSTM, regression only)
 
 Work in progress
+- **SVM**: classification done, regression WIP
 - **Recurrent neural network** (RNN & LSTM): classification
 - **Transformer**: WIP
 
 Next models
-- **SVM** 
 - **Boosting methods**
 - **Convolutional neural network**

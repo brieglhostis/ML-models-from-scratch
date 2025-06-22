@@ -195,3 +195,71 @@ def random_argmax(A, axis=0):
         return np.array([random_argmax(a) for a in A.T]).T
     else:
         return np.array([random_argmax(a) for a in A])
+
+def simplex_linear_program(c, A, b, maximize=False):
+    """
+    Solve linear problem with the simplex solution to find X that minimizes c X such that A X <= b and X >= 0
+    https://en.wikipedia.org/wiki/Simplex_algorithm
+    """
+    
+    def solve_simplex(tableau, c, A, b, index=0):
+        if all(c <= 0) or index == A.shape[1]:
+            # Compute optimal input
+            x = np.zeros((c.shape[0], 1))
+            n_positive = np.where(c == 0)
+            x[n_positive] = A[:,n_positive].T @ b
+            return x
+        M, N = A.shape
+        # Select pivot column
+        n_min = np.random.choice(np.where(c == np.min(c))[0])
+        A_min = A[:,n_min]
+        # Select pivot row
+        ratios = np.where(A_min > 0, b / A_min, np.inf)
+        m_min = np.random.choice(np.where(ratios == np.min(ratios))[0])
+        # Update pivot row
+        tableau[1+m_min] /= tableau[1+m_min, 1+n_min]
+        # Update simplex tableau
+        for i in range(M+1):
+            if i != 1+m_min:
+                tableau[i] -= tableau[1+m_min] * tableau[i, 1+n_min]
+        return solve_simplex(tableau, -tableau[0, 1:N+1], tableau[1:M+1, 1:N+1], tableau[1:M+1, -1], index=index+1)
+    
+    if maximize:
+        c = -c
+    # Add slack variable expansions
+    c_expanded = np.r_[c, np.zeros((A.shape[0], 1))]
+    A_expanded = np.c_[A, np.eye(A.shape[0])]
+    # Compute initial simplex tableau
+    tableau = np.c_[
+        np.r_[np.ones((1, 1)), np.zeros((A.shape[0], 1))]
+        , np.r_[-c_expanded.T, A_expanded]
+        , np.r_[np.zeros((1, 1)), b]
+    ]
+    return solve_simplex(tableau, c_expanded[:,0], A_expanded, b[:,0])[:c.shape[0]]
+    
+def frank_wolfe_quadratic_program(x_0, Q, c, A, b, A_eq, b_eq, max_steps=100, maximize=False, verbose=True):
+    """
+    Solve quadratic problem with the Frank Wolfe programm to find 
+    X that minimizes 0.5 XT Q X + c X such that A X <= b and A_eq X = b_eq
+    # https://en.wikipedia.org/wiki/Frank%E2%80%93Wolfe_algorithm
+    """
+    if maximize:
+        Q = - Q
+        c = - c
+    x = x_0.copy()
+    for k in range(max_steps):
+        # Compute gradient
+        grad = Q @ x + c
+        # Solve linear problem with gradient
+        s = simplex_linear_program(grad, np.r_[A, A_eq, -A_eq], np.r_[b, b_eq, -b_eq])
+        # Find best alpha to update inputs
+        alphas = np.linspace(0, 1, 1000)
+        f = [(0.5 * (x + alpha * (s - x)).T @ Q @ (x + alpha * (s - x)) + c.T @ (x + alpha * (s - x)))[0,0] for alpha in alphas]
+        alpha = alphas[np.argmin(f)]
+        if alpha == 0.0:
+            return x
+        # Update inputs
+        x = x + alpha * (s - x)
+        if verbose:
+            print(f"Step {k+1}/{max_steps} - F_min = {(0.5 * x.T @ Q @ x + c.T @ x)[0,0]:.2f}")
+    return x

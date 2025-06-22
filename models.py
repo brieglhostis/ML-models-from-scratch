@@ -1,7 +1,7 @@
 
 import numpy as np
 
-from utils import sigmoid, mse, r_square, log_loss, accuracy, precision, recall, f1_score, auc, dummy_encode, random_argmin, random_argmax
+from utils import sigmoid, mse, r_square, log_loss, accuracy, precision, recall, f1_score, auc, dummy_encode, random_argmin, random_argmax, frank_wolfe_quadratic_program
 from optimizers import GradientDescentOptimizer, AdaGradOptimizer, RMSPropOptimizer, AdamOptimizer
 from activations import LinearActivation, ReLuActivation, TanHActivation
 from layers import DenseLayer, RecurrentLayer, LSTMLayer
@@ -530,7 +530,7 @@ class ClassificationRandomForest:
     INFORMATION_FUNCTIONS = ['gini', 'entropy']
 
     def __init__(self, T=10, F=None, information_function='gini', max_depth=None, min_samples_split=2, min_samples_leaf=1):
-        """g
+        """
         Arguments:
          - T (int)                    - number of trees
          - F (int)                    - number of features per tree, if None then uses the square root of the total number of features
@@ -589,6 +589,87 @@ class ClassificationRandomForest:
             sample_mask = np.random.choice(np.arange(X.shape[0]), X.shape[0], replace=True)
             self.trees[t].fit(X[sample_mask,:][:,self.feature_masks[t]], Y[sample_mask,:])
         return self.trees
+
+
+class SupportVectorClassifier:
+    """
+    Support vector classifier:
+    Y = sign(X W - b)
+    """
+    
+    KERNELS = ['polynomial', 'gaussian']
+    
+    def __init__(self, l2=0.001, kernel='polynomial', kernel_polynomial_order=1, kernel_polynomial_offset=0.0, kernel_gaussian_sigma=1.0):
+        """
+        Arguments:
+         - l2 (float)                       - L2 regularization parameter 
+         - kernel (str)                     - name of the kernel, either 'polynomial' or 'gaussian'
+         - kernel_polynomial_order (int)    - polynomial kernel order
+         - kernel_polynomial_offset (float) - polynomial kernel offset
+         - kernel_gaussian_sigma (float)    - gaussian radial kernel sigma
+        """
+        assert kernel in self.KERNELS
+        self.l2 = l2
+        self.kernel = kernel
+        self.kernel_polynomial_order = kernel_polynomial_order
+        self.kernel_polynomial_offset = kernel_polynomial_offset
+        self.kernel_gaussian_sigma = kernel_gaussian_sigma
+        self.W = None
+        self.b = None
+        
+    def predict(self, X):
+        """
+        Compute predictions for a set of input samples 
+        Arguments:
+         - X (np.ndarray) - input features (NxF)
+        """
+        if self.W is None or self.b is None:
+            raise ValueError('Cannot predict before model is fitted')
+        return 0.5 + np.expand_dims(np.sign(X @ self.W - self.b), axis=-1) / 2
+    
+    def fit(self, X, Y, max_steps=10):
+        """
+        Fit model by maximizing the dual problem
+        Arguments:
+         - X (np.ndarray)  - input training features (NxF)
+         - Y (np.ndarray)  - target training actuals (NxD)
+         - max_steps (int) - maximum number of steps in the Frank Wolfe algorithm
+        """
+        N = X.shape[0]
+        Y = 2.0 * Y[:,:1] - 1.0 # Transform labels to -1 and 1
+        
+        # Compute Q based on kernel choice
+        if self.kernel == 'polynomial':
+            Q = np.array([[
+                Y[i,0] * np.power((X[i] @ X[j]) + self.kernel_polynomial_offset, self.kernel_polynomial_order) * Y[j,0] 
+                for j in range(N)
+            ] for i in range(N)])
+        elif self.kernel == 'gaussian':
+            Q = np.array([[
+                Y[i,0] * np.exp(- np.sum(np.square(X[i] - X[j])) / 2 / self.kernel_gaussian_sigma**2) * Y[j,0] 
+                for j in range(N)
+            ] for i in range(N)])
+        c = - np.ones((N,1))
+        
+        # Inequality constraints: A X <= b
+        A = np.r_[1.0 * np.eye(N)]
+        b = np.r_[1/(2*N*self.l2) * np.ones((N, 1))]
+        
+        # Equality constraints: A X = b
+        A_eq = Y.T
+        b_eq = np.zeros((1, 1))
+        
+        # alpha initialization with a random vector
+        alpha_0 = np.zeros((N, 1))
+        alpha_0[np.random.choice(np.where(Y[:,0] == 1.0)[0])] = 1/(2*N*self.l2)
+        alpha_0[np.random.choice(np.where(Y[:,0] == -1.0)[0])] = 1/(2*N*self.l2)
+        
+        # Dual problem solving using the Frank Wolfe quadratic program
+        alpha = frank_wolfe_quadratic_program(alpha_0, Q, c, A, b, A_eq, b_eq, max_steps=max_steps)
+        
+        # Weights and border width calculation
+        self.W = np.sum(alpha * Y * X, axis=0)
+        self.b = self.W @ X[np.argmax(alpha)] - Y[np.argmax(alpha), 0]
 
 
 class RegressionNeuralNetwork:
