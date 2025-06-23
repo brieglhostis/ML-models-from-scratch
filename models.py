@@ -683,6 +683,96 @@ class SupportVectorClassifier:
         self.b = self.kernel_function(X[np.argmax(self.alpha)], self.X) @ (self.alpha * self.Y) - Y[np.argmax(self.alpha)]
 
 
+class SupportVectorRegression:
+    """
+    Support vector regression:
+    Y = X W - b
+    """
+    
+    KERNELS = ['polynomial', 'gaussian']
+    
+    def __init__(self, C=1.0, epsilon=0.01, kernel='polynomial', kernel_polynomial_order=1, kernel_polynomial_offset=0.0, kernel_gaussian_sigma=1.0):
+        """
+        Arguments:
+         - C (float)                        - constraint parameter 
+         - epsilon (float)                  - error margin parameter 
+         - kernel (str)                     - name of the kernel, either 'polynomial' or 'gaussian'
+         - kernel_polynomial_order (int)    - polynomial kernel order
+         - kernel_polynomial_offset (float) - polynomial kernel offset
+         - kernel_gaussian_sigma (float)    - gaussian radial kernel sigma
+        """
+        assert kernel in self.KERNELS
+        self.C = C
+        self.epsilon = epsilon
+        self.kernel = kernel
+        self.kernel_polynomial_order = kernel_polynomial_order
+        self.kernel_polynomial_offset = kernel_polynomial_offset
+        self.kernel_gaussian_sigma = kernel_gaussian_sigma
+        self.alpha = None
+        self.X = None
+        self.N = None
+        self.b = None
+        
+    def kernel_function(self, X_1, X_2):
+        """
+        Compute the kernel function for two samples X
+        Arguments:
+         - X_1 (np.ndarray) - first input features (NxF)
+         - X_2 (np.ndarray) - second input features (NxF)
+        """
+        if self.kernel == 'polynomial':
+            return np.power((X_1 @ X_2.T) + self.kernel_polynomial_offset, self.kernel_polynomial_order)
+        elif self.kernel == 'gaussian':
+            if len(X_1.shape) == 1 and len(X_2.shape) == 1:
+                return np.exp(- (X_1 - X_2) @ (X_1 - X_2).T / 2 / self.kernel_gaussian_sigma**2)
+            elif len(X_1.shape) == 2:
+                return np.array([self.kernel_function(X_1[i], X_2) for i in range(X_1.shape[0])])
+            elif len(X_2.shape) == 2:
+                return np.array([self.kernel_function(X_1, X_2[j]) for j in range(X_2.shape[0])])
+        
+    def predict(self, X):
+        """
+        Compute predictions for a set of input samples 
+        Arguments:
+         - X (np.ndarray) - input features (NxF)
+        """
+        if self.alpha is None or self.b is None:
+            raise ValueError('Cannot predict before model is fitted')
+        return self.kernel_function(X, self.X) @ np.c_[1.0 * np.eye(self.N), -1.0 * np.eye(self.N)] @ self.alpha - self.b
+    
+    def fit(self, X, Y, max_steps=10):
+        """
+        Fit model by maximizing the dual problem
+        Arguments:
+         - X (np.ndarray)  - input training features (NxF)
+         - Y (np.ndarray)  - target training actuals (NxD)
+         - max_steps (int) - maximum number of steps in the Frank Wolfe algorithm
+        """
+        N = X.shape[0]
+        
+        # Compute Q using kernel
+        Q = np.r_[1.0 * np.eye(N), -1.0 * np.eye(N)] @ self.kernel_function(X, X) @ np.c_[1.0 * np.eye(N), -1.0 * np.eye(N)]
+        c = self.epsilon * np.ones((2*N, 1)) - np.r_[1.0 * Y, -1.0 * Y]
+        
+        # Inequality constraints: A X <= b
+        A = 1.0 * np.eye(2*N)
+        b = self.C * np.ones((2*N, 1))
+        
+        # Equality constraints: A X = b
+        A_eq =  np.c_[1.0 * np.ones((1, N)), -1.0 * np.ones((1, N))]
+        b_eq = np.zeros((1, 1))
+        
+        # alpha initialization
+        alpha_0 = self.C * np.ones((2*N, 1))
+        
+        # Dual problem solving using the Frank Wolfe quadratic program
+        self.alpha = frank_wolfe_quadratic_program(alpha_0, Q, c, A, b, A_eq, b_eq, max_steps=max_steps)
+        
+        # Weights and border width calculation
+        self.X, self.N = X, N
+        self.b = self.kernel_function(X[np.argmax(self.alpha[:N])], self.X) @ np.c_[1.0 * np.eye(self.N), -1.0 * np.eye(self.N)] @ self.alpha - Y[np.argmax(self.alpha[:N])]
+
+
 class RegressionNeuralNetwork:
     """
     Regression Neural Network model:

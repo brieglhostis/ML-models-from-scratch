@@ -9,12 +9,12 @@ Finalised models
 - **Logistic regression** (binary classification only)
 - **Decision trees** (regression and classification)
 - **Random forest** (regression and classification)
+- **SVM**: (regression and classification)
 - **Regular regression neural network** (dense layers only)
 - **Recurrent neural network** (RNN & LSTM, regression only)
 
 Work in progress
-- **SVM**: classification done, regression WIP
-- **Recurrent neural network** (RNN & LSTM): classification
+- **Recurrent neural network** (RNN & LSTM): classification, regression done
 - **Transformer**: WIP
 
 Next models
