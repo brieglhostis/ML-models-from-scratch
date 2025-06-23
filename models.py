@@ -629,7 +629,12 @@ class SupportVectorClassifier:
         if self.kernel == 'polynomial':
             return np.power((X_1 @ X_2.T) + self.kernel_polynomial_offset, self.kernel_polynomial_order)
         elif self.kernel == 'gaussian':
-            return np.exp(- (X_1 - X_2) @ (X_1 - X_2).T / 2 / self.kernel_gaussian_sigma**2)
+            if len(X_1.shape) == 1 and len(X_2.shape) == 1:
+                return np.exp(- (X_1 - X_2) @ (X_1 - X_2).T / 2 / self.kernel_gaussian_sigma**2)
+            elif len(X_1.shape) == 2:
+                return np.array([self.kernel_function(X_1[i], X_2) for i in range(X_1.shape[0])])
+            elif len(X_2.shape) == 2:
+                return np.array([self.kernel_function(X_1, X_2[j]) for j in range(X_2.shape[0])])
         
     def predict(self, X):
         """
