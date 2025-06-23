@@ -614,8 +614,22 @@ class SupportVectorClassifier:
         self.kernel_polynomial_order = kernel_polynomial_order
         self.kernel_polynomial_offset = kernel_polynomial_offset
         self.kernel_gaussian_sigma = kernel_gaussian_sigma
-        self.W = None
+        self.alpha = None
+        self.X = None
+        self.Y = None
         self.b = None
+        
+    def kernel_function(self, X_1, X_2):
+        """
+        Compute the kernel function for two samples X
+        Arguments:
+         - X_1 (np.ndarray) - first input features (NxF)
+         - X_2 (np.ndarray) - second input features (NxF)
+        """
+        if self.kernel == 'polynomial':
+            return np.power((X_1 @ X_2.T) + self.kernel_polynomial_offset, self.kernel_polynomial_order)
+        elif self.kernel == 'gaussian':
+            return np.exp(- (X_1 - X_2) @ (X_1 - X_2).T / 2 / self.kernel_gaussian_sigma**2)
         
     def predict(self, X):
         """
@@ -623,9 +637,10 @@ class SupportVectorClassifier:
         Arguments:
          - X (np.ndarray) - input features (NxF)
         """
-        if self.W is None or self.b is None:
+        if self.alpha is None or self.b is None:
             raise ValueError('Cannot predict before model is fitted')
-        return 0.5 + np.expand_dims(np.sign(X @ self.W - self.b), axis=-1) / 2
+        Y_pred = np.sign(self.kernel_function(X, self.X) @ (self.alpha * self.Y) - self.b)
+        return 0.5 + Y_pred / 2
     
     def fit(self, X, Y, max_steps=10):
         """
@@ -638,22 +653,13 @@ class SupportVectorClassifier:
         N = X.shape[0]
         Y = 2.0 * Y[:,:1] - 1.0 # Transform labels to -1 and 1
         
-        # Compute Q based on kernel choice
-        if self.kernel == 'polynomial':
-            Q = np.array([[
-                Y[i,0] * np.power((X[i] @ X[j]) + self.kernel_polynomial_offset, self.kernel_polynomial_order) * Y[j,0] 
-                for j in range(N)
-            ] for i in range(N)])
-        elif self.kernel == 'gaussian':
-            Q = np.array([[
-                Y[i,0] * np.exp(- np.sum(np.square(X[i] - X[j])) / 2 / self.kernel_gaussian_sigma**2) * Y[j,0] 
-                for j in range(N)
-            ] for i in range(N)])
+        # Compute Q using kernel
+        Q = Y * self.kernel_function(X, X) * Y.T
         c = - np.ones((N,1))
         
         # Inequality constraints: A X <= b
-        A = np.r_[1.0 * np.eye(N)]
-        b = np.r_[1/(2*N*self.l2) * np.ones((N, 1))]
+        A = 1.0 * np.eye(N)
+        b = 1/(2*N*self.l2) * np.ones((N, 1))
         
         # Equality constraints: A X = b
         A_eq = Y.T
@@ -665,11 +671,11 @@ class SupportVectorClassifier:
         alpha_0[np.random.choice(np.where(Y[:,0] == -1.0)[0])] = 1/(2*N*self.l2)
         
         # Dual problem solving using the Frank Wolfe quadratic program
-        alpha = frank_wolfe_quadratic_program(alpha_0, Q, c, A, b, A_eq, b_eq, max_steps=max_steps)
+        self.alpha = frank_wolfe_quadratic_program(alpha_0, Q, c, A, b, A_eq, b_eq, max_steps=max_steps)
         
         # Weights and border width calculation
-        self.W = np.sum(alpha * Y * X, axis=0)
-        self.b = self.W @ X[np.argmax(alpha)] - Y[np.argmax(alpha), 0]
+        self.X, self.Y = X, Y
+        self.b = self.kernel_function(X[np.argmax(self.alpha)], self.X) @ (self.alpha * self.Y) - Y[np.argmax(self.alpha)]
 
 
 class RegressionNeuralNetwork:
