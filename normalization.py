@@ -13,13 +13,13 @@ class LayerNormalization:
         if self.gamma is None or self.beta is None:
             self.gamma = 1.0 * np.ones([1]*(len(X.shape)-1)+[X.shape[-1]])
             self.beta = 0.0 * self.gamma
-        mu = X.mean(axis=-1, keepdims=True)
-        var = X.var(axis=-1, keepdims=True)
+        mu = np.mean(X, axis=-1, keepdims=True)
+        var = np.var(X, axis=-1, keepdims=True)
         return self.gamma * (X - mu) / np.sqrt(var + self.epsilon) + self.beta
     
     def backward(self, X, Y_error, l2=0.0):
-        mu = X.mean(axis=-1, keepdims=True)
-        var = X.var(axis=-1, keepdims=True)
+        mu = np.mean(X, axis=-1, keepdims=True)
+        var = np.var(X, axis=-1, keepdims=True)
         safe_sigma = np.sqrt(var + self.epsilon)
         X_norm = (X - mu) / safe_sigma
         # Parameter gradients
@@ -29,8 +29,8 @@ class LayerNormalization:
         F = X.shape[-1]
         X_error = (
             F * Y_error 
-            - (1-self.alpha) * np.sum(Y_error, axis=agg_axis, keepdims=True) 
-            - (1-self.alpha) * np.sum(Y_error * X_norm, axis=agg_axis, keepdims=True) * (X_norm - np.sum(X_norm, axis=agg_axis, keepdims=True) / F)
+            - np.sum(Y_error, axis=-1, keepdims=True) 
+            - np.sum(Y_error * X_norm, axis=-1, keepdims=True) * (X_norm - np.sum(X_norm, axis=-1, keepdims=True) / F)
         ) * self.gamma / safe_sigma / F
         return {'gamma_gradient': gamma_gradient, 'beta_gradient': beta_gradient}, X_error
     
