@@ -357,14 +357,14 @@ class EmbeddingLayer:
             X = X-1
         X = dummy_encode(X, self.F)
         if not inference and self.dropout_p > 0.0 and self.dropout_p < 1.0:
-            return X@(self.W * np.where(np.random.random(size=self.W.shape)>self.dropout_p, 1.0, 0.0) / (1-self.dropout_p))
-        return X@self.W
+            return X @ (self.W * np.where(np.random.random(size=self.W.shape)>self.dropout_p, 1.0, 0.0) / (1-self.dropout_p))
+        return X @ self.W
     
     def backward(self, X, Y_error, l2=0.0):
         if self.mask_zero:
             X = X-1
         X = dummy_encode(X, self.F)
-        W_gradient = np.sum(np.transpose(X, axes=(1,2,0))@np.transpose(Y_error, axes=(1,0,2)), axis=0) + 2*l2 * self.W / self.F / self.D
+        W_gradient = np.sum(np.transpose(X, axes=(1,2,0)) @ np.transpose(Y_error, axes=(1,0,2)), axis=0) + 2*l2 * self.W / self.F / self.D
         return {'W_gradient': W_gradient}, None
     
     def update(self, W_gradient):
@@ -391,13 +391,15 @@ class PositionalEmbeddingLayer(EmbeddingLayer):
         W = self.W
         if not inference and self.dropout_p > 0.0 and self.dropout_p < 1.0:
             W *= np.where(np.random.random(size=W.shape)>self.dropout_p, 1.0, 0.0) / (1-self.dropout_p)
-        return X@W * np.sqrt(self.D) + np.expand_dims(self.positional_encoding[:X.shape[1],:], axis=0)
+        mask = np.where(np.sum(np.square(X), axis=2) > 0, 1, 0) # (N x T)
+        positional_encoding = self.positional_encoding[:X.shape[1],:] # (T x D)
+        return X @ W * np.sqrt(self.D) + np.expand_dims(mask, axis=-1) * np.expand_dims(positional_encoding, axis=0)
     
     def backward(self, X, Y_error, l2=0.0):
         if self.mask_zero:
             X = X-1
         X = dummy_encode(X, self.F)
-        W_gradient = np.sum(np.transpose(X, axes=(1,2,0))@np.transpose(Y_error, axes=(1,0,2)), axis=0) + 2*l2 * self.W / self.F / self.D
+        W_gradient = np.sum(np.transpose(X, axes=(1,2,0)) @ np.transpose(Y_error, axes=(1,0,2)), axis=0) + 2*l2 * self.W / self.F / self.D
         return {'W_gradient': W_gradient * np.sqrt(self.D)}, None
 
 
@@ -425,7 +427,18 @@ class MultiHeadAttentionLayer:
         return np.reshape(X, (X.shape[0], X.shape[1], X.shape[2]*X.shape[3])) # (N x T x F)
     
     def forward(self, X_q, X_k=None, X_v=None, inference=True):
-        mask = np.tril(np.ones((X_q.shape[1], X_q.shape[1]))) if self.use_causal_mask else np.ones((X_q.shape[1], X_q.shape[1])) # (T x T)
+
+        def softmax_with_mask(X, mask, axis=-1, safety_threshold=200):
+            exp_safety_threshold = np.exp(safety_threshold)
+            exp_X = np.where(X>safety_threshold, exp_safety_threshold, np.exp(X))
+            return exp_X * mask / (np.sum(exp_X * mask, axis=axis, keepdims=True) + 1e-6)
+
+        if self.use_causal_mask:
+            mask = np.repeat(np.expand_dims(np.tril(np.ones((X_q.shape[1], X_q.shape[1]))), axis=0), X_q.shape[0], axis=0) # (N x T x T)
+        else:
+            mask = np.where(np.sum(np.square(X_q), axis=2) > 0, 1, 0) # (N x T)
+            mask = np.array([m @ m.T for m in np.expand_dims(mask, axis=-1)]) # (N x T x T)
+        mask = np.expand_dims(mask, axis=1)
         X_k = X_q.copy() if X_k is None else X_k
         X_v = X_q.copy() if X_v is None else X_v
         X = {'Q': X_q, 'K': X_k, 'V': X_v} # (N x T x F)
@@ -439,15 +452,25 @@ class MultiHeadAttentionLayer:
         H = {k: self.split(H[k]) for k in H} # (N x NH x T x F/NH)
         # Attention score
         S = H['Q']@np.transpose(H['K'], axes=(0,1,3,2)) # (N x NH x T x T)
-        S = S * np.expand_dims(mask, axis=(0,1)) # (N x NH x T x T)
-        S = softmax(S / np.sqrt(self.F // self.NH), axis=(2,3)) # (N x NH x T x T)
+        S = softmax_with_mask(S / np.sqrt(self.F // self.NH), mask, axis=(3)) # (N x NH x T x T)
         S = S@H['V'] # (N x NH x T x F/NH)
         # Attention score merge
         S = self.merge(S) # (N x T x F)
         return S
         
     def backward(self, Y_error, X_q, X_k=None, X_v=None, l2=0.0):
-        mask = np.tril(np.ones((X_q.shape[1], X_q.shape[1]))) if self.use_causal_mask else np.ones((X_q.shape[1], X_q.shape[1])) # (T x T)
+
+        def softmax_with_mask(X, mask, axis=-1, safety_threshold=200):
+            exp_safety_threshold = np.exp(safety_threshold)
+            exp_X = np.where(X>safety_threshold, exp_safety_threshold, np.exp(X))
+            return exp_X * mask / (np.sum(exp_X * mask, axis=axis, keepdims=True) + 1e-6)
+
+        if self.use_causal_mask:
+            mask = np.repeat(np.expand_dims(np.tril(np.ones((X_q.shape[1], X_q.shape[1]))), axis=0), X_q.shape[0], axis=0) # (N x T x T)
+        else:
+            mask = np.where(np.sum(np.square(X_q), axis=2) > 0, 1, 0) # (N x T)
+            mask = np.array([m @ m.T for m in np.expand_dims(mask, axis=-1)]) # (N x T x T)
+        mask = np.expand_dims(mask, axis=1)
         X_k = X_q.copy() if X_k is None else X_k
         X_v = X_q.copy() if X_v is None else X_v
         X = {'Q': X_q, 'K': X_k, 'V': X_v} # (N x T x F)
@@ -461,8 +484,7 @@ class MultiHeadAttentionLayer:
         # Attention score (until softmax)
         query_size = self.F // self.NH
         S = H['Q']@np.transpose(H['K'], axes=(0,1,3,2)) # (N x NH x T x T)
-        S = S * np.expand_dims(mask, axis=(0,1)) # (N x NH x T x T)
-        S = softmax(S / np.sqrt(query_size), axis=(2,3)) # (N x NH x T x T)
+        S = softmax_with_mask(S / np.sqrt(query_size), mask, axis=(3)) # (N x NH x T x T)
         # Compute W_q gradient
         W_q_gradient = (S*(1-S)) * (Y_error @ np.transpose(H['V'], axes=(0,1,3,2))) # (N x NH x T x T)
         W_k_gradient = W_q_gradient.copy() # Same starting calculation
