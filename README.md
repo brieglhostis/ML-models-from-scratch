@@ -9,14 +9,16 @@ Finalised models
 - **Logistic regression** (binary classification only)
 - **Decision trees** (regression and classification)
 - **Random forest** (regression and classification)
+- **Gradient boosting** (regression only)
 - **SVM**: (regression and classification)
 - **Regular regression neural network** (dense layers only)
 - **Recurrent neural network** (RNN & LSTM, regression only)
 
 Work in progress
 - **Recurrent neural network** (RNN & LSTM): classification, regression done
+- **Gradient boosting**: classification, regression done
 - **Transformer**: WIP
 
 Next models
-- **Boosting methods**
+- **AdaBoost**
 - **Convolutional neural network**

@@ -591,6 +591,93 @@ class ClassificationRandomForest:
         return self.trees
 
 
+
+class RegressionGradientBoosting:
+    """
+    Gradient boosing regression with decision tree estimators
+    """
+
+    def __init__(self, M=100, max_depth=None, min_samples_split=2, min_samples_leaf=1):
+        """
+        Arguments:
+         - M (int)                 - number of estimators
+         - max_depth (int)         - maximum dept of each tree
+         - min_samples_split (int) - minimum number of samples to allow a split
+         - min_samples_leaf (int)  - minimum number of samples in every leaf
+        """
+        self.M = M
+        self.estimator_training_arguments = {
+            'max_depth': max_depth
+            , 'min_samples_split': min_samples_split
+            , 'min_samples_leaf': min_samples_leaf
+        }
+        self.estimators = None
+        self.gammas = None
+        self.history = None
+
+    def predict(self, X):
+        """
+        Compute predictions for a set of input samples 
+        Arguments:
+         - X (np.ndarray) - input features (NxF)
+        """
+        if self.estimators is None or self.gammas is None:
+            raise ValueError('Cannot predict before model is fitted')
+        return np.sum(np.array([gamma * estimator.predict(X) for estimator, gamma in zip(self.estimators, self.gammas)]), axis=0)
+
+    def fit(self, X, Y, X_val=None, Y_val=None, learning_rate=0.1, sampling_fraction=0.5, verbose=True):
+        """
+        Fit model by minimizing squared error loss
+        Arguments:
+         - X (np.ndarray)            - input training features (NxF)
+         - Y (np.ndarray)            - target training actuals (NxD)
+         - X_val (np.ndarray)        - input validation actuals (N'xF)
+         - Y_val (np.ndarray)        - target validation actuals (N'xD)
+         - learning_rate (float)     - learning rate in gradient descent
+         - sampling_fraction (float) - fraction of training samples used in boostrapping at each step
+         - verbose (bool)            - set to True to print intermediary evaluation metrics
+        """
+        
+        N = Y.shape[0]
+        N_samples = int(sampling_fraction * N)
+        Y_pred = np.zeros(Y.shape)
+        self.estimators = []
+        self.gammas = []
+        self.history = []
+        for m in range(self.M):
+            # Residuals fitting
+            pseudo_residuals = Y - Y_pred
+            h = RegressionDecisionTree(**self.estimator_training_arguments)
+            boostrap_indexes = np.random.choice(np.arange(N), size=N_samples, replace=True)
+            h.fit(X[boostrap_indexes], pseudo_residuals[boostrap_indexes])
+            h_Y_pred = h.predict(X)
+            
+            # Gamma calculation
+            gamma = (Y - Y_pred).T @ h_Y_pred / (h_Y_pred.T @ h_Y_pred)
+            gamma = learning_rate * gamma[0, 0] if m > 0 else 1.0
+            
+            self.estimators.append(h)
+            self.gammas.append(gamma)
+            
+            # Evaluation
+            Y_pred += gamma * h_Y_pred
+            metrics = {
+                'train_mse': mse(Y, Y_pred)
+                , 'train_r_square': r_square(Y, Y_pred)
+            }
+            if X_val is not None and Y_val is not None:
+                Y_pred_val = self.predict(X_val)
+                metrics['val_mse'] = mse(Y_val, Y_pred_val)
+                metrics['val_r_square'] = r_square(Y_val, Y_pred_val)
+            self.history.append(metrics)
+            
+            # Verbose
+            if verbose and (m+1) % 10 == 0:
+                print(f"Step {m+1}/{self.M} - train loss = {metrics['train_mse'].mean():.4f}" + (f", validation loss = {metrics['val_mse'].mean():.4f}" if 'val_mse' in metrics else ""))
+            
+        return self.history
+
+
 class SupportVectorClassifier:
     """
     Support vector classifier:
@@ -876,7 +963,7 @@ class RegressionNeuralNetwork:
          - optimizer (str)             - name of the optimizer to use among 'Regular', 'AdaGrad', 'RMSProp', or 'Adam'
          - gradient_decay (float)      - exponential gradient decay parameter for RMSProp and Adam
          - gradient_norm_decay (float) - exponential gradient norm decay parameter for Adam
-         - verbose (float)             - set to True to print intermediary evaluation metrics
+         - verbose (bool)              - set to True to print intermediary evaluation metrics
         """
         
         # Optimizers initialization
@@ -1075,7 +1162,7 @@ class RegressionRecurrentNeuralNetwork:
          - optimizer (str)             - name of the optimizer to use among 'Regular', 'AdaGrad', 'RMSProp', or 'Adam'
          - gradient_decay (float)      - exponential gradient decay parameter for RMSProp and Adam
          - gradient_norm_decay (float) - exponential gradient norm decay parameter for Adam
-         - verbose (float)             - set to True to print intermediary evaluation metrics
+         - verbose (bool)             - set to True to print intermediary evaluation metrics
         """
         
         # Optimizers initialization
